@@ -7,6 +7,9 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
+    "build:libs": "npm run build cache && npm run build broker && npm run build common && npm run build database",
+    "build:apps": "npm run build gsm && npm run build gsm-transport-web",
+    "build:all": "npm run build:libs && npm run build:apps",
     "format": "prettier --write \"apps/**/*.ts\" \"libs/**/*.ts\"",
     "start": "nest start",
     "dev": "nest start --watch",
