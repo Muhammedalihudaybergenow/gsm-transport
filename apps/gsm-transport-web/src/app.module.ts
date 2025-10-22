@@ -1,9 +1,14 @@
 import { MessagingModule, QUEUE_NAMES } from '@libs/broker';
 import { Module } from '@nestjs/common';
 import { AuthModule } from './auth/auth.module';
+import { ConfigModule } from '@nestjs/config';
 
 @Module({
   imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+      cache: true,
+    }),
     MessagingModule.register(
       [
         {

@@ -1,10 +1,9 @@
 import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
-import { RpcException } from '@nestjs/microservices';
 import { ConfigService } from '@nestjs/config';
 import { SMSInterface } from '@libs/common';
-import SerialPortGsm = require('serialport-gsm');
-
-export const options: SerialPortGsm.ModemOptions = {
+import * as serialportgsm from 'serialport-gsm';
+export const modem = serialportgsm.Modem();
+export const options = {
   baudRate: 9600,
   dataBits: 8,
   parity: 'none',
@@ -23,11 +22,11 @@ export const options: SerialPortGsm.ModemOptions = {
   logger: console,
 };
 
-export const modem = new SerialPortGsm.Modem(options);
-
 @Injectable()
 export class MessagesService implements OnModuleInit {
   private readonly logger = new Logger(MessagesService.name);
+
+  private modems: Record<string, serialportgsm.Modem> = {};
 
   constructor(private configService: ConfigService) {}
 
@@ -36,29 +35,56 @@ export class MessagesService implements OnModuleInit {
       .get<string>('SERIALPORT_GSM_LIST')
       ?.split(',') || ['/dev/ttyUSB0'];
 
-    // Open modem
-    modem.open((err?: any) => {
-      if (err) this.logger.error('Failed to open modem', err);
-      else this.logger.log('Modem connected');
-    });
+    for (const port of ports) {
+      await this.initializeModem(port.trim());
+    }
+  }
 
-    // Event handlers
-    modem.on('open', () => {
-      this.logger.log('Modem open');
-      modem.setModemMode(() => this.logger.log('Modem set to PDU'), 'PDU');
-      modem.initializeModem(() => {
-        modem.getNetworkSignal((signal) =>
-          this.logger.log(`Signal: ${signal}`),
+  private initializeModem(port: string): Promise<void> {
+    return new Promise((resolve) => {
+      const modem = new serialportgsm.Modem();
+
+      modem.open(port, options, (err?: any) => {
+        if (err) {
+          this.logger.error(`Failed to open modem on ${port}`, err);
+          return resolve();
+        }
+
+        this.logger.log(`✅ Modem connected on ${port}`);
+        this.modems[port] = modem;
+
+        modem.on('open', () => {
+          this.logger.log(`📶 Modem [${port}] open`);
+          modem.setModemMode(
+            () => this.logger.log(`Modem [${port}] set to PDU`),
+            'PDU',
+          );
+          modem.initializeModem(
+            (res, err) => {
+              modem.getNetworkSignal((signal) =>
+                this.logger.log(`Modem [${port}] signal: ${signal}`),
+              );
+            },
+            (err) => {
+              this.logger.error(`Modem [${port}] initialization error:`, err);
+            },
+          );
+          modem.checkModem((status) =>
+            this.logger.log(`Modem [${port}] status: ${status}`),
+          );
+        });
+
+        modem.on('error', (err: any) =>
+          this.logger.error(`❌ Modem [${port}] error`, err),
         );
-      });
-      modem.checkModem((status) => this.logger.log(`Status: ${status}`));
-    });
+        modem.on('close', () => this.logger.warn(`⚠️ Modem [${port}] closed`));
+        modem.on('onSendingMessage', (data) =>
+          this.logger.log(`📤 Modem [${port}] sending SMS`, data),
+        );
 
-    modem.on('error', (err: any) => this.logger.error('Modem error', err));
-    modem.on('close', () => this.logger.warn('Modem closed'));
-    modem.on('onSendingMessage', (data) =>
-      this.logger.log('Sending SMS', data),
-    );
+        resolve();
+      });
+    });
   }
 
   sendSms(data: SMSInterface) {
@@ -66,14 +92,36 @@ export class MessagesService implements OnModuleInit {
     const normalizedPhonenumber = `${phonenumber}`.trim().slice(-8);
     const fullNumber = `+993${normalizedPhonenumber}`;
 
+    const availablePorts = Object.keys(this.modems);
+    if (availablePorts.length === 0) {
+      this.logger.error('❌ No modems connected');
+      return false;
+    }
+
+    // Choose a modem in round-robin or random fashion
+    const randomPort =
+      availablePorts[Math.floor(Math.random() * availablePorts.length)];
+    const modem = this.modems[randomPort];
+
+    if (!modem) {
+      this.logger.error(`❌ Modem not found for port ${randomPort}`);
+      return false;
+    }
+
     try {
       modem.sendSMS(fullNumber, payload, false, (response) => {
-        this.logger.log(`SMS response for ${fullNumber}:`, response);
+        this.logger.log(
+          `✅ SMS response from [${randomPort}] → ${fullNumber}:`,
+          response,
+        );
       });
-      this.logger.log(`SMS sent to ${fullNumber}`);
-      return true;
+      this.logger.log(`📨 SMS sent to ${fullNumber} via ${randomPort}`);
+      return {
+        success: true,
+        message: `📨 SMS sent to ${fullNumber}`,
+      };
     } catch (error) {
-      this.logger.error('SMS sending failed', error);
+      this.logger.error(`SMS sending failed via ${randomPort}`, error);
       return false;
     }
   }

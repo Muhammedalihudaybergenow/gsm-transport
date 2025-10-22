@@ -12,12 +12,12 @@ dotenv.config({
 async function bootstrap() {
   const logger = new Logger('Menus Microservice');
   const rabbitMQOptions = {
-    host: process.env.RABBITMQ_HOST || 'localhost',
-    port: process.env.RABBITMQ_PORT || 5672,
+    host: process.env.RABBITMQ_REMOTE_HOST || 'localhost',
+    port: process.env.RABBITMQ_REMOTE_PORT || 5672,
     username: process.env.RABBITMQ_USERNAME || 'guest',
     password: process.env.RABBITMQ_PASSWORD || 'guest',
   };
-
+  console.log('RabbitMQ Options:', rabbitMQOptions);
   async function wait(ms: number) {
     return new Promise((res) => setTimeout(res, ms));
   }
@@ -28,19 +28,18 @@ async function bootstrap() {
         const conn = await amqp.connect(url);
         logger.log('Connected to RabbitMQ successfully');
         conn.on('close', async () => {
-          logger.warn('RabbitMQ connection closed. Reconnecting in 5s...');
-          await wait(5000);
+          await wait(30000);
           await ensureRabbitMQConnection(url, logger);
         });
         conn.on('error', (err) => {
           logger.error('RabbitMQ connection error:', err.message);
         });
-        conn.close(); // close this temporary test connection
+        conn.close();
         break;
       } catch (err) {
         logger.error(`Failed to connect to RabbitMQ: ${err.message}`);
-        logger.log('Retrying in 5 seconds...');
-        await wait(5000);
+        logger.log('Retrying in 30 seconds...');
+        await wait(30000);
       }
     }
   }
@@ -63,6 +62,6 @@ async function bootstrap() {
     },
   );
   await app.listen();
-  logger.log('Microservice is listening MENUS...');
+  logger.log('Microservice is listening GSM...');
 }
 bootstrap().catch(console.error);
