@@ -31,60 +31,34 @@ export class MessagesService implements OnModuleInit {
   constructor(private configService: ConfigService) {}
 
   async onModuleInit() {
-    const ports = this.configService
-      .get<string>('SERIALPORT_GSM_LIST')
-      ?.split(',') || ['/dev/ttyUSB0'];
-    console.log(ports);
+    const ports = this.configService.get<string>('SERIALPORT_GSM_LIST');
     const list = await serialportgsm.list();
-    console.log(list);
-    for (const port of ports) {
-      await this.initializeModem(port.trim());
-    }
-  }
-
-  private initializeModem(port: string): Promise<void> {
-    return new Promise((resolve) => {
-      const modem = new serialportgsm.Modem();
-      modem.open(port, options, (err?: any) => {
-        if (err) {
-          this.logger.error(`Failed to open modem on ${port}`, err);
-          return resolve();
-        }
-
-        this.logger.log(`✅ Modem connected on ${port}`);
-        this.modems[port] = modem;
-
-        modem.on('open', () => {
-          this.logger.log(`📶 Modem [${port}] open`);
-          modem.setModemMode(
-            () => this.logger.log(`Modem [${port}] set to PDU`),
-            'PDU',
-          );
-          modem.initializeModem(
-            (res, err) => {
-              modem.getNetworkSignal((signal) =>
-                this.logger.log(`Modem [${port}] signal: ${signal}`),
-              );
-            },
-            (err) => {
-              this.logger.error(`Modem [${port}] initialization error:`, err);
-            },
-          );
-          modem.checkModem((status) =>
-            this.logger.log(`Modem [${port}] status: ${status}`),
-          );
+    modem.open(
+      this.configService.get('SERIALPORT_GSM_LIST'),
+      options,
+      (data: any) => {
+        console.log('Connected to device', data);
+      },
+    );
+    modem.on('open', (data) => {
+      modem.setModemMode(() => {
+        console.log(`Modem mode`);
+      }, 'PDU');
+      modem.initializeModem(() => {
+        modem.getNetworkSignal((data) => {
+          console.log('Signal', data);
         });
-
-        modem.on('error', (err: any) =>
-          this.logger.error(`❌ Modem [${port}] error`, err),
-        );
-        modem.on('close', () => this.logger.warn(`⚠️ Modem [${port}] closed`));
-        modem.on('onSendingMessage', (data) =>
-          this.logger.log(`📤 Modem [${port}] sending SMS`, data),
-        );
-
-        resolve();
       });
+      modem.checkModem((data) => {
+        console.log(data);
+      });
+      console.log(data);
+    });
+    modem.on('error', (err: any) => {
+      console.log(err);
+    });
+    modem.on('close', (res) => {
+      console.log(res);
     });
   }
 
@@ -92,37 +66,23 @@ export class MessagesService implements OnModuleInit {
     const { payload, phonenumber } = data;
     const normalizedPhonenumber = `${phonenumber}`.trim().slice(-8);
     const fullNumber = `+993${normalizedPhonenumber}`;
-    console.log(this.modems);
-    const availablePorts = Object.keys(this.modems);
-    if (availablePorts.length === 0) {
-      this.logger.error('❌ No modems connected');
-      return false;
-    }
-
-    // Choose a modem in round-robin or random fashion
-    const randomPort =
-      availablePorts[Math.floor(Math.random() * availablePorts.length)];
-    const modem = this.modems[randomPort];
 
     if (!modem) {
-      this.logger.error(`❌ Modem not found for port ${randomPort}`);
+      this.logger.error(`❌ Modem not found for `);
       return false;
     }
 
     try {
       modem.sendSMS(fullNumber, payload, false, (response) => {
-        this.logger.log(
-          `✅ SMS response from [${randomPort}] → ${fullNumber}:`,
-          response,
-        );
+        this.logger.log(`✅ SMS response f] → ${fullNumber}:`, response);
       });
-      this.logger.log(`📨 SMS sent to ${fullNumber} via ${randomPort}`);
+      this.logger.log(`📨 SMS sent to ${fullNumber}`);
       return {
         success: true,
         message: `📨 SMS sent to ${fullNumber}`,
       };
     } catch (error) {
-      this.logger.error(`SMS sending failed via ${randomPort}`, error);
+      this.logger.error(`SMS sending failed`, error);
       return false;
     }
   }
