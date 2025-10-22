@@ -34,6 +34,7 @@ export class MessagesService implements OnModuleInit {
     const ports = this.configService
       .get<string>('SERIALPORT_GSM_LIST')
       ?.split(',') || ['/dev/ttyUSB0'];
+    console.log(ports);
     const list = await serialportgsm.list();
     console.log(list);
     for (const port of ports) {
