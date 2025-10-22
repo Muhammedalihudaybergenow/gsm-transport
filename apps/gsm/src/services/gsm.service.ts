@@ -92,7 +92,7 @@ export class MessagesService implements OnModuleInit {
     const { payload, phonenumber } = data;
     const normalizedPhonenumber = `${phonenumber}`.trim().slice(-8);
     const fullNumber = `+993${normalizedPhonenumber}`;
-
+    console.log(this.modems);
     const availablePorts = Object.keys(this.modems);
     if (availablePorts.length === 0) {
       this.logger.error('❌ No modems connected');
