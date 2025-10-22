@@ -34,7 +34,8 @@ export class MessagesService implements OnModuleInit {
     const ports = this.configService
       .get<string>('SERIALPORT_GSM_LIST')
       ?.split(',') || ['/dev/ttyUSB0'];
-
+    const list = await serialportgsm.list();
+    console.log(list);
     for (const port of ports) {
       await this.initializeModem(port.trim());
     }
@@ -43,7 +44,6 @@ export class MessagesService implements OnModuleInit {
   private initializeModem(port: string): Promise<void> {
     return new Promise((resolve) => {
       const modem = new serialportgsm.Modem();
-
       modem.open(port, options, (err?: any) => {
         if (err) {
           this.logger.error(`Failed to open modem on ${port}`, err);
