@@ -122,8 +122,18 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
       await this.sendCommand('AT'); // basic check
       await this.sendCommand('AT+CMGF=1'); // text mode
       await this.sendCommand(`AT+CMGS="${fullNumber}"`, ['>']); // wait for > prompt
-      await this.sendCommand(`${payload}\x1A`, ['OK'], 10000); // send message, wait for OK
-
+      const result = await this.sendCommand(
+        `${payload}\x1A`,
+        ['OK', '+CMS ERROR'],
+        10000,
+      ); // send message, wait for OK
+      console.log(result);
+      if (result.includes('+CMS ERROR')) {
+        return {
+          success: false,
+          message: 'Failed',
+        };
+      }
       console.log(`SMS sent successfully to ${fullNumber}`);
       return { success: true, message: 'SMS sent successfully' };
     } catch (error) {
