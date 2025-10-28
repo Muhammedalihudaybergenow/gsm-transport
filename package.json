@@ -24,6 +24,7 @@
     "@nestjs/microservices": "^11.1.6",
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.0.1",
+    "@serialport/parser-readline": "^13.0.0",
     "amqp-connection-manager": "^5.0.0",
     "amqplib": "^0.10.9",
     "class-transform": "^0.7.1",
@@ -34,6 +35,7 @@
     "passport-http": "^0.3.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "serialport": "^13.0.0",
     "serialport-gsm": "^4.0.1"
   },
   "devDependencies": {
