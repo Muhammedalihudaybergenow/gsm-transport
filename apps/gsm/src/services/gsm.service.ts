@@ -1,11 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SMSInterface } from '@libs/common';
 import * as serialportgsm from 'serialport-gsm';
 
-const SerialGsm = serialportgsm;
-
-const MODEM_OPTIONS = {
+export const modem = serialportgsm.Modem();
+export const options = {
   baudRate: 9600,
   dataBits: 8,
   parity: 'none',
@@ -25,93 +24,81 @@ const MODEM_OPTIONS = {
 };
 
 @Injectable()
-export class MessagesService {
-  private readonly logger = new Logger(MessagesService.name);
+export class MessagesService implements OnModuleInit {
+  private reconnectTimeout: NodeJS.Timeout | null = null;
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(private configService: ConfigService) {}
 
-  async sendSms(
-    data: SMSInterface,
-  ): Promise<{ success: boolean; message: string }> {
+  async onModuleInit() {
+    const list = await serialportgsm.list();
+    console.log('Available serial ports:', list);
+
+    const port = this.configService.get('SERIALPORT_GSM');
+    this.connectModem(port);
+  }
+
+  private connectModem(port: string) {
+    modem.open(port, options, (data: any) => {
+      console.log('Connected to device', data);
+    });
+
+    modem.on('open', () => {
+      console.log('📡 Modem is open');
+      modem.setModemMode(() => console.log('Modem mode set to PDU'), 'PDU');
+      modem.initializeModem(() => {
+        modem.getNetworkSignal((data) => console.log('Signal', data));
+        modem.checkModem((data) => console.log('Modem check:', data));
+      });
+    });
+
+    modem.on('error', (err: any) => {
+      console.error('Modem error:', err);
+      this.tryReconnect(port);
+    });
+
+    modem.on('close', (res) => {
+      console.warn('Modem closed:', res);
+      this.tryReconnect(port);
+    });
+  }
+
+  private tryReconnect(port: string) {
+    if (this.reconnectTimeout) return; // already attempting reconnect
+
+    console.log('⚡ Attempting to reconnect modem in 3s...');
+    this.reconnectTimeout = setTimeout(() => {
+      this.reconnectTimeout = null;
+      console.log('🔌 Reconnecting modem...');
+      this.connectModem(port);
+    }, 3000);
+  }
+
+  sendSms(data: SMSInterface) {
     const { payload, phonenumber } = data;
-    const normalizedPhonenumber = `${phonenumber}`.trim().slice(-8);
-    const fullNumber = `+993${normalizedPhonenumber}`;
-    const portPath = this.configService.get<string>('SERIALPORT_GSM_LIST');
 
-    if (!portPath) {
+    try {
+      const normalizedPhonenumber = `${phonenumber}`.trim().slice(-8);
+      const fullNumber = `+993${normalizedPhonenumber}`;
+
+      modem.sendSMS(fullNumber, payload, false, (response) => {
+        console.log('SMS send callback:', response);
+      });
+
+      modem.on('onSendingMessage', (info) => {
+        console.log('Sending message event:', info);
+      });
+
+      console.log(`SMS send initiated to ${fullNumber}`);
       return {
-        success: false,
-        message: 'SMS sending failed: modem port not configured',
+        status: true,
+        message: 'SMS sent successfully',
+      };
+    } catch (error) {
+      console.error('SMS sending error:', error);
+      return {
+        status: false,
+        message: 'Failed to send SMS',
       };
     }
-
-    const modem = SerialGsm.Modem();
-    let modemStable = true; // flag to track unexpected disconnects
-
-    const cleanup = () => {
-      if (modem.isOpened) {
-        modem.close(() => this.logger.log('🔒 Modem connection closed.'));
-      }
-    };
-
-    return new Promise((resolve) => {
-      modem.on('error', (err: any) => {
-        this.logger.error(`❌ Modem error: ${err.message || err}`);
-        modemStable = false;
-      });
-
-      modem.on('close', () => {
-        this.logger.warn('⚠️ Modem connection closed unexpectedly.');
-        modemStable = false;
-      });
-
-      modem.open(portPath, MODEM_OPTIONS, () => {
-        setTimeout(() => {
-          modem.initializeModem(() => {
-            modem.setModemMode(() => {}, 'PDU');
-
-            modem.sendSMS(fullNumber, payload, false, (response: any) => {
-              // wait 2 seconds to make sure modem is stable
-              setTimeout(() => {
-                cleanup();
-
-                if (!modemStable) {
-                  return resolve({
-                    success: false,
-                    message: 'SMS sending failed by serial device',
-                  });
-                }
-
-                if (
-                  response?.status === 'Success' ||
-                  response?.data?.response?.includes('Success')
-                ) {
-                  return resolve({
-                    success: true,
-                    message: `📨 SMS sent successfully to ${fullNumber}`,
-                  });
-                } else {
-                  return resolve({
-                    success: false,
-                    message: 'SMS sending failed by serial device',
-                  });
-                }
-              }, 2000);
-            });
-          });
-        }, 3000); // stabilize modem after opening
-      });
-
-      // safety timeout
-      setTimeout(() => {
-        if (!modem.isOpened) {
-          cleanup();
-          resolve({
-            success: false,
-            message: 'SMS sending failed by serial device',
-          });
-        }
-      }, 10000);
-    });
   }
 }
