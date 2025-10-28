@@ -1,9 +1,8 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SMSInterface } from '@libs/common';
-import * as serialportgsm from 'serialport-gsm';
+import { Modem, SerialPortCommunicator } from 'serialport-gsm';
 
-export const modem = serialportgsm.Modem();
 export const options = {
   baudRate: 9600,
   dataBits: 8,
@@ -29,76 +28,28 @@ export class MessagesService implements OnModuleInit {
 
   constructor(private configService: ConfigService) {}
 
-  async onModuleInit() {
-    const list = await serialportgsm.list();
-    console.log('Available serial ports:', list);
+  async onModuleInit() {}
 
-    const port = this.configService.get('SERIALPORT_GSM_LIST');
-    this.connectModem(port);
-  }
-
-  private connectModem(port: string) {
-    modem.open(port, options, (data: any) => {
-      console.log('Connected to device', data);
-    });
-
-    modem.on('open', () => {
-      console.log('📡 Modem is open');
-      modem.setModemMode(() => console.log('Modem mode set to PDU'), 'PDU');
-      modem.initializeModem(() => {
-        modem.getNetworkSignal((data) => console.log('Signal', data));
-        modem.checkModem((data) => console.log('Modem check:', data));
-      });
-    });
-
-    modem.on('error', (err: any) => {
-      console.error('Modem error:', err);
-      this.tryReconnect(port);
-    });
-
-    modem.on('close', (res) => {
-      console.warn('Modem closed:', res);
-      this.tryReconnect(port);
-    });
-  }
-
-  private tryReconnect(port: string) {
-    if (this.reconnectTimeout) return; // already attempting reconnect
-
-    console.log('⚡ Attempting to reconnect modem in 3s...');
-    this.reconnectTimeout = setTimeout(() => {
-      this.reconnectTimeout = null;
-      console.log('🔌 Reconnecting modem...');
-      this.connectModem(port);
-    }, 3000);
-  }
-
-  sendSms(data: SMSInterface) {
+  async sendSms(data: SMSInterface) {
     const { payload, phonenumber } = data;
 
     try {
       const normalizedPhonenumber = `${phonenumber}`.trim().slice(-8);
       const fullNumber = `+993${normalizedPhonenumber}`;
-
-      modem.sendSMS(fullNumber, payload, false, (response) => {
-        console.log('SMS send callback:', response);
+      const serialPortCommunicator = new SerialPortCommunicator(
+        this.configService.get('SERIALPORT_GSM_LIST') || '/dev/ttyUSB0',
+      );
+      const myModem = new Modem(serialPortCommunicator);
+      await myModem.open();
+      console.log('.checkModem()', await myModem.checkModem());
+      console.log('.getSignalInfo()', await myModem.getSignalInfo());
+      await myModem.deleteAllSimMessages();
+      await myModem.sendSms(fullNumber, payload, false, (res) => {
+        console.log('SMS send response:', res);
       });
-
-      modem.on('onSendingMessage', (info) => {
-        console.log('Sending message event:', info);
-      });
-
-      console.log(`SMS send initiated to ${fullNumber}`);
-      return {
-        status: true,
-        message: 'SMS sent successfully',
-      };
+      await myModem.close();
     } catch (error) {
-      console.error('SMS sending error:', error);
-      return {
-        status: false,
-        message: 'Failed to send SMS',
-      };
+      return { success: false, message: 'Failed to send SMS' };
     }
   }
 }
