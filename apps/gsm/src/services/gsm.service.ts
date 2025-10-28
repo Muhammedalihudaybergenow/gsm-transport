@@ -33,7 +33,7 @@ export class MessagesService implements OnModuleInit {
     const list = await serialportgsm.list();
     console.log('Available serial ports:', list);
 
-    const port = this.configService.get('SERIALPORT_GSM');
+    const port = this.configService.get('SERIALPORT_GSM_LIST');
     this.connectModem(port);
   }
 
