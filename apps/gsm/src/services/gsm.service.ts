@@ -49,6 +49,7 @@ export class MessagesService implements OnModuleInit {
       });
       await myModem.close();
     } catch (error) {
+      console.log('Error sending SMS:', error);
       return { success: false, message: 'Failed to send SMS' };
     }
   }
