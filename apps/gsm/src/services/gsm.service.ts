@@ -8,7 +8,7 @@ import { SMSInterface } from '@libs/common';
 export class MessagesService implements OnModuleInit, OnModuleDestroy {
   private port: SerialPort;
   private parser: ReadlineParser;
-  private reconnectTimeout = 3000; // 3 seconds
+  private reconnectTimeout = 3000;
   private isClosing = false;
 
   constructor(private configService: ConfigService) {}
@@ -20,27 +20,15 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
   private async initPort() {
     const path =
       this.configService.get('SERIALPORT_GSM_LIST') || '/dev/ttyUSB0';
-    this.port = new SerialPort({
-      path,
-      baudRate: 9600,
-      autoOpen: false,
-    });
-
+    this.port = new SerialPort({ path, baudRate: 9600, autoOpen: false });
     this.parser = this.port.pipe(new ReadlineParser({ delimiter: '\r\n' }));
 
-    this.parser.on('data', (data) => {
-      console.log('Modem data:', data);
-    });
-
-    this.port.on('open', () => {
-      console.log('Serial port opened for GSM modem');
-    });
-
+    this.parser.on('data', (data) => console.log('Modem data:', data));
+    this.port.on('open', () => console.log('Serial port opened for GSM modem'));
     this.port.on('error', (err) => {
       console.error('Serial port error:', err);
       this.tryReconnect();
     });
-
     this.port.on('close', () => {
       console.warn('Serial port closed');
       if (!this.isClosing) this.tryReconnect();
@@ -88,7 +76,6 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
       };
 
       this.parser.on('data', listener);
-
       this.port.write(command + '\r', (err) => {
         if (err) {
           this.parser.removeListener('data', listener);
@@ -103,13 +90,54 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  // Encode text to UCS2 hex
+  private encodeUCS2(text: string): string {
+    const bufLE = Buffer.from(text, 'utf16le'); // Node supports utf16le
+    // Swap bytes for big-endian
+    const bufBE = Buffer.alloc(bufLE.length);
+    for (let i = 0; i < bufLE.length; i += 2) {
+      bufBE[i] = bufLE[i + 1];
+      bufBE[i + 1] = bufLE[i];
+    }
+    return bufBE.toString('hex').toUpperCase();
+  }
+
+  // Convert phone number to semi-octets for PDU
+  private encodePhoneNumber(number: string) {
+    if (number.startsWith('+')) number = number.slice(1);
+    if (number.length % 2 !== 0) number += 'F';
+    return (
+      number
+        .match(/../g)
+        ?.map((s) => s[1] + s[0])
+        .join('') ?? ''
+    );
+  }
+
+  // Build single-part PDU message
+  private buildPDU(smsc: string, recipient: string, message: string) {
+    const smscEncoded = this.encodePhoneNumber(smsc);
+    const smscLength = (smscEncoded.length / 2).toString(16).padStart(2, '0');
+
+    const recipientEncoded = this.encodePhoneNumber(recipient);
+    const recipientLength = recipient.length.toString(16).padStart(2, '0');
+
+    const msgUCS2 = this.encodeUCS2(message);
+    const msgLength = (msgUCS2.length / 2).toString(16).padStart(2, '0');
+
+    // PDU format (simplified for single-part Unicode SMS)
+    const pdu = `${smscLength}${smscEncoded}1100${recipientLength}91${recipientEncoded}0008${msgLength}${msgUCS2}`;
+    const pduLength = pdu.length / 2 - smscLength.length / 2 - 1; // length in octets
+
+    return { pdu, pduLength };
+  }
+
   public async sendSms(
     data: SMSInterface,
   ): Promise<{ success: boolean; message: string }> {
     try {
       const { payload, phonenumber } = data;
 
-      // Normalize phone number (for Turkmenistan example)
       const normalizedPhonenumber = `${phonenumber}`.trim().slice(-8);
       const fullNumber = `+993${normalizedPhonenumber}`;
 
@@ -118,22 +146,31 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
         return { success: false, message: 'Port not open. Try again later.' };
       }
 
-      // Send SMS commands sequentially
-      await this.sendCommand('AT'); // basic check
-      await this.sendCommand('AT+CMGF=1'); // text mode
-      await this.sendCommand(`AT+CMGS="${fullNumber}"`, ['>']); // wait for > prompt
+      // Basic check
+      await this.sendCommand('AT');
+
+      // Set PDU mode
+      await this.sendCommand('AT+CMGF=0');
+
+      // SMSC (from config or default)
+      const smsc = this.configService.get('SMSC_NUMBER') || '99365999996';
+
+      // Build PDU
+      const { pdu, pduLength } = this.buildPDU(smsc, fullNumber, payload);
+
+      // Send SMS
+      await this.sendCommand(`AT+CMGS=${pduLength}`, ['>']);
       const result = await this.sendCommand(
-        `${payload}\x1A`,
+        `${pdu}\x1A`,
         ['OK', '+CMS ERROR'],
         10000,
-      ); // send message, wait for OK
+      );
+
       console.log(result);
       if (result.includes('+CMS ERROR')) {
-        return {
-          success: false,
-          message: 'Failed',
-        };
+        return { success: false, message: 'Failed to send SMS' };
       }
+
       console.log(`SMS sent successfully to ${fullNumber}`);
       return { success: true, message: 'SMS sent successfully' };
     } catch (error) {
