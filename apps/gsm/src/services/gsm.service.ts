@@ -20,6 +20,10 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
   private reconnectInterval = 5000;
   private isClosing = false;
 
+  // 👇 SMS queue and processing state
+  private messageQueue: SMSInterface[] = [];
+  private isProcessing = false;
+
   constructor(private configService: ConfigService) {}
 
   async onModuleInit() {
@@ -70,7 +74,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
       await this.sendCommand('ATZ', ['OK']); // Reset modem
       await this.sendCommand('ATE0', ['OK']); // Disable echo
       await this.sendCommand('AT+CMGF=1', ['OK']); // Text mode
-      console.log('Modem initialized in text mode');
+      Logger.log('Modem initialized in text mode');
     } catch (error) {
       console.error('Modem initialization failed:', error);
       throw error;
@@ -130,30 +134,74 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  /**
+   * Queued SMS sender
+   */
   public async sendSms({
     payload,
     phonenumber,
   }: SMSInterface): Promise<{ success: boolean; message: string }> {
-    try {
-      const phoneStr = phonenumber.toString().trim();
-      if (!/^\d{8}$/.test(phoneStr)) {
-        return { success: false, message: 'Phone number must be 8 digits' };
-      }
+    // ✅ Immediate response to client
+    this.enqueueMessage({ payload, phonenumber });
+    return { success: true, message: 'Message was sent' };
+  }
 
-      const fullNumber = `+993${phoneStr}`;
-      if (!/^\+993\d{8}$/.test(fullNumber)) {
-        return { success: false, message: 'Invalid Turkmenistan phone number' };
-      }
-
-      await this.sendCommand(`AT+CMGS="${fullNumber}"`, ['>']);
-      await this.sendCommand(`${payload}\x1A`, ['OK'], 10000);
-
-      Logger.log(`SMS sent successfully to ${fullNumber}`);
-      return { success: true, message: 'SMS sent successfully' };
-    } catch (error) {
-      Logger.error('Failed to send SMS:', error.message);
-      return { success: false, message: error.message };
+  /**
+   * Add message to queue and start processing if idle
+   */
+  private enqueueMessage(message: SMSInterface) {
+    this.messageQueue.push(message);
+    Logger.log(
+      `Message queued. Queue length: ${this.messageQueue.length}`,
+      'MessagesService',
+    );
+    if (!this.isProcessing) {
+      this.processQueue();
     }
+  }
+
+  /**
+   * Process queue one-by-one with 5s delay
+   */
+  private async processQueue() {
+    if (this.isProcessing) return;
+    this.isProcessing = true;
+
+    while (this.messageQueue.length > 0) {
+      const message = this.messageQueue.shift();
+      if (!message) continue;
+
+      try {
+        await this._sendSmsInternal(message);
+      } catch (err) {
+        Logger.error(`Failed to send queued SMS: ${err.message}`);
+      }
+
+      // Wait 5 seconds before next SMS
+      await new Promise((res) => setTimeout(res, 5000));
+    }
+
+    this.isProcessing = false;
+  }
+
+  private async _sendSmsInternal({
+    payload,
+    phonenumber,
+  }: SMSInterface): Promise<void> {
+    const phoneStr = phonenumber.toString().trim();
+    if (!/^\d{8}$/.test(phoneStr)) {
+      throw new Error('Phone number must be 8 digits');
+    }
+
+    const fullNumber = `+993${phoneStr}`;
+    if (!/^\+993\d{8}$/.test(fullNumber)) {
+      throw new Error('Invalid Turkmenistan phone number');
+    }
+
+    await this.sendCommand(`AT+CMGS="${fullNumber}"`, ['>']);
+    await this.sendCommand(`${payload}\x1A`, ['OK'], 10000);
+
+    Logger.log(`SMS sent successfully to ${fullNumber}`);
   }
 
   async onModuleDestroy() {
