@@ -275,16 +275,17 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     const balanceMatch = messageBody.match(/([\d,.]+)\s*manat/);
     const balance = balanceMatch ? balanceMatch[1] : 'Unknown';
     Logger.log(`💰 Current balance: ${balance}`);
+    if (parseFloat(balance) < 10) {
+      const phonenumbers = (
+        this.configService.get<string>('OTP_ADMIN_PHONENUMBER') || '63412114'
+      ).split('?');
 
-    const phonenumbers = (
-      this.configService.get<string>('OTP_ADMIN_PHONENUMBER') || '63412114'
-    ).split('?');
-
-    for (const phonenumber of phonenumbers) {
-      await this.sendSms({
-        payload: `I am your ORP service. Please refill your current balance. Your current balance: ${balance}`,
-        phonenumber: parseInt(phonenumber),
-      });
+      for (const phonenumber of phonenumbers) {
+        await this.sendSms({
+          payload: `I am your ORP service. Please refill your current balance. Your current balance: ${balance}`,
+          phonenumber: parseInt(phonenumber),
+        });
+      }
     }
   }
 }
