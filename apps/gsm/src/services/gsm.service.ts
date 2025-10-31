@@ -197,7 +197,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     if (!/^\+993\d{8}$/.test(fullNumber)) {
       throw new Error('Invalid Turkmenistan phone number');
     }
-
+    await this.sendCommand('AT+CMGF=1', ['OK']); // Text mode
     await this.sendCommand(`AT+CMGS="${fullNumber}"`, ['>']);
     await this.sendCommand(`${payload}\x1A`, ['OK'], 10000);
 
