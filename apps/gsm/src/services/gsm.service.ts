@@ -213,7 +213,9 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
           await this.sendCommand(`AT+CMGR=${index}`, ['OK']);
         }
       }
-
+      if (line.includes('Hormatly')) {
+        await this.handleBalanceMessage(line);
+      }
       // SMS read from memory
       else if (line.startsWith('+CMGR:')) {
         const header = line;
@@ -221,9 +223,6 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
 
         const match = header.match(/\+CMGR:\s+"[^"]+","([^"]+)"/);
         const phoneNumber = match ? match[1] : 'Unknown';
-        if (phoneNumber === '0800') {
-          await this.handleBalanceMessage(messageBody);
-        }
         Logger.log(`📩 Incoming message from ${phoneNumber}: ${messageBody}`);
       }
 
@@ -273,11 +272,8 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     }
   }
   private async handleBalanceMessage(messageBody: string) {
-    Logger.warn('message body:', messageBody);
     const balanceMatch = messageBody.match(/([\d,.]+)\s*manat/);
-    console.log(balanceMatch);
     const balance = balanceMatch ? balanceMatch[1] : 'Unknown';
-    console.log(balance);
     Logger.log(`💰 Current balance: ${balance}`);
 
     const phonenumbers = (
