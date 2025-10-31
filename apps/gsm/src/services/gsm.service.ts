@@ -75,11 +75,15 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
   private async initializeModem() {
     try {
       await this.sendCommand('AT', ['OK']);
+      await new Promise((r) => setTimeout(r, 2000));
       await this.sendCommand('ATZ', ['OK']);
       await new Promise((r) => setTimeout(r, 2000));
       await this.sendCommand('ATE0', ['OK']); // disable echo
+      await new Promise((r) => setTimeout(r, 2000));
       await this.sendCommand('AT+CMGF=1', ['OK']); // text mode
-      await this.sendCommand('AT+CNMI=2,2,0,0,0', ['OK']); // direct incoming SMS
+      await new Promise((r) => setTimeout(r, 2000));
+      await this.sendCommand('AT+CNMI=2,1,0,0,0', ['OK']); // incoming SMS notification
+      await new Promise((r) => setTimeout(r, 2000));
       Logger.log('Modem initialized and ready');
     } catch (err) {
       Logger.error('Modem initialization failed: ' + err);
@@ -164,7 +168,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
         Logger.error('Failed to send SMS: ' + err.message);
       }
 
-      await new Promise((r) => setTimeout(r, 5000));
+      await new Promise((r) => setTimeout(r, 5000)); // small delay between messages
     }
 
     this.isProcessing = false;
@@ -175,7 +179,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     let fullNumber: string;
 
     if (phoneStr === '0800') {
-      fullNumber = phoneStr; // special balance check number
+      fullNumber = phoneStr; // short code
     } else {
       if (!/^\d{8}$/.test(phoneStr))
         throw new Error('Phone number must be 8 digits');
@@ -183,8 +187,12 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     }
 
     await this.sendCommand('AT+CMGF=1', ['OK']); // text mode
+
+    Logger.log(`Sending SMS to ${fullNumber}...`);
+
     await this.sendCommand(`AT+CMGS="${fullNumber}"`, ['>']);
-    await this.sendCommand(`${payload}\x1A`, ['OK'], 10000);
+    const timeout = fullNumber === '0800' ? 20000 : 10000; // longer for short codes
+    await this.sendCommand(`${payload}\x1A`, ['OK'], timeout);
 
     Logger.log(`SMS sent successfully to ${fullNumber}`);
   }
@@ -195,43 +203,39 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
       .map((l) => l.trim())
       .filter(Boolean);
 
-    // Handle +CMGR response
-    if (lines[0]?.startsWith('+CMGR:')) {
-      const header = lines[0];
-      const messageBody = lines.slice(1).join(' ');
-
-      const match = header.match(/\+CMGR:\s+"[^"]+","([^"]+)"/);
-      const phoneNumber = match ? match[1] : 'Unknown';
-
-      Logger.log(`📩 Incoming message from ${phoneNumber}: ${messageBody}`);
-
-      if (phoneNumber === '0800') {
-        const balanceMatch = messageBody.match(/([\d,.]+)\s*manat/);
-        const balance = balanceMatch ? balanceMatch[1] : 'Unknown';
-        Logger.log(`💰 Current balance: ${balance}`);
-        if (parseFloat(balance) < 10) {
-          const phonenumbers = (
-            this.configService.get<string>('OTP_ADMIN_PHONENUMBER') ||
-            '63412114'
-          )?.split('?');
-          for (const phonenumber of phonenumbers) {
-            await this.sendSms({
-              payload: `I am your orp service. Please fillup your current balance. Your current balance ${balance}`,
-              phonenumber: parseInt(phoneNumber),
-            });
-          }
+    for (const line of lines) {
+      // New SMS stored in memory
+      if (line.startsWith('+CMTI:')) {
+        const match = line.match(/\+CMTI: "(.+)",(\d+)/);
+        if (match) {
+          const index = match[2];
+          Logger.log(`📩 New SMS stored at index ${index}`);
+          await this.sendCommand(`AT+CMGR=${index}`, ['OK']);
         }
       }
-    }
-    // Handle +CMT (real-time) messages
-    else if (lines[0]?.startsWith('+CMT:')) {
-      const header = lines[0];
-      const messageBody = lines.slice(1).join(' ');
-      const match = header.match(/\+CMT:\s+"([^"]+)"/);
-      const phoneNumber = match ? match[1] : 'Unknown';
-      Logger.log(
-        `📩 Incoming real-time message from ${phoneNumber}: ${messageBody}`,
-      );
+
+      // SMS read from memory
+      else if (line.startsWith('+CMGR:')) {
+        const header = line;
+        const messageBody = lines.slice(1).join(' ');
+
+        const match = header.match(/\+CMGR:\s+"[^"]+","([^"]+)"/);
+        const phoneNumber = match ? match[1] : 'Unknown';
+
+        Logger.log(`📩 Incoming message from ${phoneNumber}: ${messageBody}`);
+      }
+
+      // Real-time incoming SMS
+      else if (line.startsWith('+CMT:')) {
+        const header = line;
+        const messageBody = lines.slice(1).join(' ');
+
+        const match = header.match(/\+CMT:\s+"([^"]+)"/);
+        const phoneNumber = match ? match[1] : 'Unknown';
+        Logger.log(
+          `📩 Incoming real-time message from ${phoneNumber}: ${messageBody}`,
+        );
+      }
     }
   }
 
@@ -244,7 +248,16 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
       Logger.error('Failed to send balance check SMS: ' + err.message);
     }
   }
-
+  @Cron(CronExpression.EVERY_HOUR)
+  async cleanupMemory() {
+    try {
+      Logger.log('🧹 Cleaning all messages from modem memory...');
+      await this.sendCommand('AT+CMGD=1,4', ['OK']); // delete all messages
+      Logger.log('✅ All messages deleted from memory');
+    } catch (err) {
+      Logger.error('Failed to clean memory: ' + err.message);
+    }
+  }
   async onModuleDestroy() {
     this.isClosing = true;
     if (this.port?.isOpen) {
