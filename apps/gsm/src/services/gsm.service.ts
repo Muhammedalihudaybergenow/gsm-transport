@@ -8,7 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { SerialPort } from 'serialport';
 import { ReadlineParser } from '@serialport/parser-readline';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Submit, SmsDeliver, Deliver, parse } from 'node-pdu';
+import { Submit, Deliver, parse } from 'node-pdu';
 const submit = new Submit('+99363412114', 'Hi there');
 
 const pduString = submit.toString();
