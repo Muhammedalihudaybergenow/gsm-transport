@@ -9,7 +9,14 @@ import { SerialPort } from 'serialport';
 import { ReadlineParser } from '@serialport/parser-readline';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Submit } from 'node-pdu';
+const submit = new Submit('+99363412114', 'Hi there');
 
+const pduString = submit.toString();
+const pduLength = pduString.length / 2 - 1;
+console.log({
+  pduLength,
+  pduString,
+});
 interface SMSInterface {
   payload: string;
   phonenumber: string | number;
@@ -84,7 +91,8 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
       await this.sendCommand('AT+CMGF=0', ['OK']); // text mode
       await new Promise((r) => setTimeout(r, 2000));
       await this.sendCommand('AT+CNMI=2,1,0,0,0', ['OK']); // incoming SMS notification
-      await new Promise((r) => setTimeout(r, 2000));
+      await this.sendCommand(`AT+CSCA="${'+99365999996'}"`, ['OK']);
+      await new Promise((r) => setTimeout(r, 4000));
       Logger.log('Modem initialized and ready');
     } catch (err) {
       Logger.error('Modem initialization failed: ' + err);
@@ -179,7 +187,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     const phoneStr = phonenumber.toString().trim();
     let fullNumber: string;
     let timeout = 10000;
-
+    console.log(1);
     if (phoneStr === '0800') {
       // Short code — use text mode
       fullNumber = phoneStr;
@@ -195,9 +203,9 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
         throw new Error('Phone number must be 8 digits');
       fullNumber = `+993${phoneStr}`;
       Logger.log(`Sending SMS to ${fullNumber} in PDU mode...`);
-
+      console.log(2);
       await this.sendCommand('AT+CMGF=0', ['OK']); // PDU mode
-
+      console.log;
       const submit = new Submit(fullNumber, payload);
       const pduString = submit.toString();
       const pduLength = pduString.length / 2 - 1;
