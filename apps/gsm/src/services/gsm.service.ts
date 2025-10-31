@@ -273,6 +273,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     }
   }
   private async handleBalanceMessage(messageBody: string) {
+    Logger.warn('message body:', messageBody);
     const balanceMatch = messageBody.match(/([\d,.]+)\s*manat/);
     const balance = balanceMatch ? balanceMatch[1] : 'Unknown';
     Logger.log(`💰 Current balance: ${balance}`);
