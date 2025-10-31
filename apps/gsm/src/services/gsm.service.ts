@@ -8,7 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { SerialPort } from 'serialport';
 import { ReadlineParser } from '@serialport/parser-readline';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Submit } from 'node-pdu';
+import { Submit, SmsDeliver, Deliver, parse } from 'node-pdu';
 const submit = new Submit('+99363412114', 'Hi there');
 
 const pduString = submit.toString();
@@ -191,12 +191,8 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     if (phoneStr === '0800') {
       // Short code — use text mode
       fullNumber = phoneStr;
-      Logger.log(`Sending SMS to short code ${fullNumber} in TEXT mode...`);
-
-      await this.sendCommand('AT+CMGF=1', ['OK']); // text mode
       await this.sendCommand(`AT+CMGS="${fullNumber}"`, ['>']);
       await this.sendCommand(`${payload}\x1A`, ['OK'], 20000); // longer timeout for short codes
-      await this.sendCommand('AT+CMGF=0', ['OK']); // text mode
     } else {
       // Normal number — use PDU mode
       if (!/^\d{8}$/.test(phoneStr))
@@ -217,7 +213,6 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
 
     Logger.log(`SMS sent successfully to ${fullNumber}`);
   }
-
   private async handleIncomingMessage(data: string) {
     const lines = data
       .split('\n')
@@ -225,38 +220,14 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
       .filter(Boolean);
 
     for (const line of lines) {
-      // New SMS stored in memory
-      if (line.startsWith('+CMTI:')) {
-        const match = line.match(/\+CMTI: "(.+)",(\d+)/);
-        if (match) {
-          const index = match[2];
-          Logger.log(`📩 New SMS stored at index ${index}`);
-          await this.sendCommand(`AT+CMGR=${index}`, ['OK']);
+      try {
+        const out = parse(line);
+        if (out instanceof Deliver) {
+          console.log(out.data.getText());
         }
-      }
-      if (line.includes('Hormatly')) {
-        await this.handleBalanceMessage(line);
-      }
-      // SMS read from memory
-      else if (line.startsWith('+CMGR:')) {
-        const header = line;
-        const messageBody = lines.slice(1).join(' ');
-
-        const match = header.match(/\+CMGR:\s+"[^"]+","([^"]+)"/);
-        const phoneNumber = match ? match[1] : 'Unknown';
-        Logger.log(`📩 Incoming message from ${phoneNumber}: ${messageBody}`);
-      }
-
-      // Real-time incoming SMS
-      else if (line.startsWith('+CMT:')) {
-        const header = line;
-        const messageBody = lines.slice(1).join(' ');
-
-        const match = header.match(/\+CMT:\s+"([^"]+)"/);
-        const phoneNumber = match ? match[1] : 'Unknown';
-        Logger.log(
-          `📩 Incoming real-time message from ${phoneNumber}: ${messageBody}`,
-        );
+      } catch (err) {
+        // Not a valid PDU — skip silently
+        continue;
       }
     }
   }
