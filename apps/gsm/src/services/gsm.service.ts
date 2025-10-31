@@ -8,7 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { SerialPort } from 'serialport';
 import { ReadlineParser } from '@serialport/parser-readline';
 import { Cron, CronExpression } from '@nestjs/schedule';
-
+import iconv from 'iconv-lite';
 interface SMSInterface {
   payload: string;
   phonenumber: string | number;
@@ -173,7 +173,6 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
 
     this.isProcessing = false;
   }
-
   private async _sendSmsInternal({ payload, phonenumber }: SMSInterface) {
     const phoneStr = phonenumber.toString().trim();
     let fullNumber: string;
@@ -186,15 +185,28 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
       fullNumber = `+993${phoneStr}`;
     }
 
-    await this.sendCommand('AT+CMGF=1', ['OK']); // text mode
+    // 1️⃣ Set text mode
+    await this.sendCommand('AT+CMGF=1', ['OK']);
 
-    Logger.log(`Sending SMS to ${fullNumber}...`);
+    // 2️⃣ Set character set to UCS2 for Unicode support
+    await this.sendCommand('AT+CSCS="UCS2"', ['OK']);
+    await this.sendCommand('AT+CSMP=17,167,0,8', ['OK']);
+    const textUCS2 = iconv
+      .encode(payload, 'utf16-be')
+      .toString('hex')
+      .toUpperCase();
+    const phoneUCS2 = iconv
+      .encode(fullNumber, 'utf16-be')
+      .toString('hex')
+      .toUpperCase();
+    Logger.log(`Sending Unicode SMS to ${fullNumber}...`);
 
-    await this.sendCommand(`AT+CMGS="${fullNumber}"`, ['>']);
-    const timeout = fullNumber === '0800' ? 20000 : 10000; // longer for short codes
-    await this.sendCommand(`${payload}\x1A`, ['OK'], timeout);
+    // 4️⃣ Use UCS2-formatted number and payload
+    await this.sendCommand(`AT+CMGS="${phoneUCS2}"`, ['>']);
+    const timeout = fullNumber === '0800' ? 20000 : 10000;
+    await this.sendCommand(`${textUCS2}\x1A`, ['OK'], timeout);
 
-    Logger.log(`SMS sent successfully to ${fullNumber}`);
+    Logger.log(`✅ SMS sent successfully to ${fullNumber}`);
   }
 
   private async handleIncomingMessage(data: string) {
