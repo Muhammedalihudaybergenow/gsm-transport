@@ -221,7 +221,9 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
 
         const match = header.match(/\+CMGR:\s+"[^"]+","([^"]+)"/);
         const phoneNumber = match ? match[1] : 'Unknown';
-
+        if (phoneNumber === '0800') {
+          await this.handleBalanceMessage(messageBody);
+        }
         Logger.log(`📩 Incoming message from ${phoneNumber}: ${messageBody}`);
       }
 
@@ -267,6 +269,22 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
           else Logger.log('Serial port closed');
           resolve();
         });
+      });
+    }
+  }
+  private async handleBalanceMessage(messageBody: string) {
+    const balanceMatch = messageBody.match(/([\d,.]+)\s*manat/);
+    const balance = balanceMatch ? balanceMatch[1] : 'Unknown';
+    Logger.log(`💰 Current balance: ${balance}`);
+
+    const phonenumbers = (
+      this.configService.get<string>('OTP_ADMIN_PHONENUMBER') || '63412114'
+    ).split('?');
+
+    for (const phonenumber of phonenumbers) {
+      await this.sendSms({
+        payload: `I am your ORP service. Please refill your current balance. Your current balance: ${balance}`,
+        phonenumber: parseInt(phonenumber),
       });
     }
   }
