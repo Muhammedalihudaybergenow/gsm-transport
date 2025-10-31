@@ -187,10 +187,10 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     const phoneStr = phonenumber.toString().trim();
     let fullNumber: string;
     let timeout = 10000;
-    console.log(1);
     if (phoneStr === '0800') {
       // Short code — use text mode
       fullNumber = phoneStr;
+      await this.sendCommand('AT+CMGF=0', ['OK']);
       await this.sendCommand(`AT+CMGS="${fullNumber}"`, ['>']);
       await this.sendCommand(`${payload}\x1A`, ['OK'], 20000); // longer timeout for short codes
     } else {
