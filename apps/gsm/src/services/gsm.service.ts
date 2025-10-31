@@ -72,6 +72,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     try {
       await this.sendCommand('AT', ['OK']); // Test communication
       await this.sendCommand('ATZ', ['OK']); // Reset modem
+      await new Promise((r) => setTimeout(r, 3000));
       await this.sendCommand('ATE0', ['OK']); // Disable echo
       await this.sendCommand('AT+CMGF=1', ['OK']); // Text mode
       Logger.log('Modem initialized in text mode');
