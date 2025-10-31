@@ -190,7 +190,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     if (phoneStr === '0800') {
       // Short code — use text mode
       fullNumber = phoneStr;
-      await this.sendCommand('AT+CMGF=0', ['OK']);
+      await this.sendCommand('AT+CMGF=1', ['OK']);
       await this.sendCommand(`AT+CMGS="${fullNumber}"`, ['>']);
       await this.sendCommand(`${payload}\x1A`, ['OK'], 20000); // longer timeout for short codes
     } else {
