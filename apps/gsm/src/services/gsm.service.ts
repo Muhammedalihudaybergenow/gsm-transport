@@ -8,7 +8,8 @@ import { ConfigService } from '@nestjs/config';
 import { SerialPort } from 'serialport';
 import { ReadlineParser } from '@serialport/parser-readline';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import iconv from 'iconv-lite';
+import { Submit } from 'node-pdu';
+
 interface SMSInterface {
   payload: string;
   phonenumber: string | number;
@@ -80,7 +81,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
       await new Promise((r) => setTimeout(r, 2000));
       await this.sendCommand('ATE0', ['OK']); // disable echo
       await new Promise((r) => setTimeout(r, 2000));
-      await this.sendCommand('AT+CMGF=1', ['OK']); // text mode
+      await this.sendCommand('AT+CMGF=0', ['OK']); // text mode
       await new Promise((r) => setTimeout(r, 2000));
       await this.sendCommand('AT+CNMI=2,1,0,0,0', ['OK']); // incoming SMS notification
       await new Promise((r) => setTimeout(r, 2000));
@@ -173,40 +174,40 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
 
     this.isProcessing = false;
   }
+
   private async _sendSmsInternal({ payload, phonenumber }: SMSInterface) {
     const phoneStr = phonenumber.toString().trim();
     let fullNumber: string;
+    let timeout = 10000;
 
     if (phoneStr === '0800') {
-      fullNumber = phoneStr; // short code
+      // Short code — use text mode
+      fullNumber = phoneStr;
+      Logger.log(`Sending SMS to short code ${fullNumber} in TEXT mode...`);
+
+      await this.sendCommand('AT+CMGF=1', ['OK']); // text mode
+      await this.sendCommand(`AT+CMGS="${fullNumber}"`, ['>']);
+      await this.sendCommand(`${payload}\x1A`, ['OK'], 20000); // longer timeout for short codes
+      await this.sendCommand('AT+CMGF=0', ['OK']); // text mode
     } else {
+      // Normal number — use PDU mode
       if (!/^\d{8}$/.test(phoneStr))
         throw new Error('Phone number must be 8 digits');
       fullNumber = `+993${phoneStr}`;
+      Logger.log(`Sending SMS to ${fullNumber} in PDU mode...`);
+
+      await this.sendCommand('AT+CMGF=0', ['OK']); // PDU mode
+
+      const submit = new Submit(fullNumber, payload);
+      const pduString = submit.toString();
+      const pduLength = pduString.length / 2 - 1;
+
+      Logger.log(`PDU: ${pduString}, Length: ${pduLength}`);
+      await this.sendCommand(`AT+CMGS=${pduLength}`, ['>']);
+      await this.sendCommand(`${pduString}\x1A`, ['OK'], timeout);
     }
 
-    // 1️⃣ Set text mode
-    await this.sendCommand('AT+CMGF=1', ['OK']);
-
-    // 2️⃣ Set character set to UCS2 for Unicode support
-    await this.sendCommand('AT+CSCS="UCS2"', ['OK']);
-    await this.sendCommand('AT+CSMP=17,167,0,8', ['OK']);
-    const textUCS2 = iconv
-      .encode(payload, 'utf16-be')
-      .toString('hex')
-      .toUpperCase();
-    const phoneUCS2 = iconv
-      .encode(fullNumber, 'utf16-be')
-      .toString('hex')
-      .toUpperCase();
-    Logger.log(`Sending Unicode SMS to ${fullNumber}...`);
-
-    // 4️⃣ Use UCS2-formatted number and payload
-    await this.sendCommand(`AT+CMGS="${phoneUCS2}"`, ['>']);
-    const timeout = fullNumber === '0800' ? 20000 : 10000;
-    await this.sendCommand(`${textUCS2}\x1A`, ['OK'], timeout);
-
-    Logger.log(`✅ SMS sent successfully to ${fullNumber}`);
+    Logger.log(`SMS sent successfully to ${fullNumber}`);
   }
 
   private async handleIncomingMessage(data: string) {
@@ -297,6 +298,13 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
           phonenumber: parseInt(phonenumber),
         });
       }
+    }
+  }
+  private handleDisconnect() {
+    if (!this.isClosing) {
+      Logger.warn('Port disconnected, will attempt reconnect...');
+      this.isProcessing = false; // stop sending messages
+      this.tryReconnect();
     }
   }
 }
