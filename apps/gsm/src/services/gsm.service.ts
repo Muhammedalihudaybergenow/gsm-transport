@@ -9,14 +9,8 @@ import { SerialPort } from 'serialport';
 import { ReadlineParser } from '@serialport/parser-readline';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Submit, Deliver, parse } from 'node-pdu';
-const submit = new Submit('+99363412114', 'Hi there');
 
-const pduString = submit.toString();
-const pduLength = pduString.length / 2 - 1;
-console.log({
-  pduLength,
-  pduString,
-});
+// Check the type of the parsed PDU and extract data
 interface SMSInterface {
   payload: string;
   phonenumber: string | number;
@@ -221,9 +215,17 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
 
     for (const line of lines) {
       try {
-        const out = parse(line);
-        if (out instanceof Deliver) {
-          console.log(out.data.getText());
+        const parsedPDU = parse(line);
+        var message = '';
+        if (parsedPDU instanceof Deliver) {
+          message = parsedPDU.data.getText();
+          console.log('Timestamp:', parsedPDU.serviceCenterTimeStamp);
+        } else if (parsedPDU instanceof Submit) {
+          message = parsedPDU.data.getText();
+        } else {
+        }
+        if (message.includes('Hotmatly')) {
+          await this.handleBalanceMessage(message);
         }
       } catch (err) {
         // Not a valid PDU — skip silently
