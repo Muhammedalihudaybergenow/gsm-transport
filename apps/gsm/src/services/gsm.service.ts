@@ -232,7 +232,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
       }
     }
   }
-  @Cron(CronExpression.EVERY_MINUTE)
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async checkBalance() {
     Logger.log('⏱ Checking balance...');
     try {
