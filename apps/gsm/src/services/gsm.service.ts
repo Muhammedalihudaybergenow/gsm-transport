@@ -215,6 +215,16 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
 
     for (const line of lines) {
       try {
+        // Detect new SMS notification
+        if (line.startsWith('+CMTI:')) {
+          const match = line.match(/\+CMTI: "(.+)",(\d+)/);
+          if (match) {
+            const index = match[2];
+            Logger.log(`📩 New SMS stored at index ${index}`);
+            await this.sendCommand(`AT+CMGR=${index}`, ['OK']); // request the SMS
+          }
+          continue;
+        }
         const parsedPDU = parse(line);
         var message = '';
         if (parsedPDU instanceof Deliver) {
@@ -224,7 +234,8 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
           message = parsedPDU.data.getText();
         } else {
         }
-        if (message.includes('Hotmatly')) {
+        Logger.warn(message);
+        if (message.includes('Hormatly')) {
           await this.handleBalanceMessage(message);
         }
       } catch (err) {
