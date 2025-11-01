@@ -193,9 +193,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
         throw new Error('Phone number must be 8 digits');
       fullNumber = `+993${phoneStr}`;
       Logger.log(`Sending SMS to ${fullNumber} in PDU mode...`);
-      console.log(2);
       await this.sendCommand('AT+CMGF=0', ['OK']); // PDU mode
-      console.log;
       const submit = new Submit(fullNumber, payload);
       const pduString = submit.toString();
       const pduLength = pduString.length / 2 - 1;
@@ -225,18 +223,8 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
           }
           continue;
         }
-        const parsedPDU = parse(line);
-        var message = '';
-        if (parsedPDU instanceof Deliver) {
-          message = parsedPDU.data.getText();
-          console.log('Timestamp:', parsedPDU.serviceCenterTimeStamp);
-        } else if (parsedPDU instanceof Submit) {
-          message = parsedPDU.data.getText();
-        } else {
-        }
-        Logger.warn(message);
-        if (message.includes('Hormatly')) {
-          await this.handleBalanceMessage(message);
+        if (line.includes('Hormatly')) {
+          await this.handleBalanceMessage(line);
         }
       } catch (err) {
         // Not a valid PDU — skip silently
