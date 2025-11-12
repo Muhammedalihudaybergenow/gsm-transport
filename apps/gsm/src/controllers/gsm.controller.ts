@@ -6,7 +6,7 @@ import { MessagePattern, Payload } from '@nestjs/microservices';
 export class GsmController {
   constructor(private readonly gsmService: MessagesService) {}
 
-  @MessagePattern('send_sms')
+  @MessagePattern('send-sms')
   async sendSMS(@Payload() data: { phonenumber: number; payload: string }) {
     return this.gsmService.sendSms({
       payload: data.payload,
