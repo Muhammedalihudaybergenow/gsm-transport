@@ -8,8 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { SerialPort } from 'serialport';
 import { ReadlineParser } from '@serialport/parser-readline';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Submit, Deliver, parse } from 'node-pdu';
-const smsPdu = require('node-sms-pdu');
+import { Submit } from 'node-sms-pdu';
 // Check the type of the parsed PDU and extract data
 interface SMSInterface {
   payload: string;
@@ -177,33 +176,32 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
 
     this.isProcessing = false;
   }
-  private async sendPduMessage(fullNumber: string, message: string) {
-    // Convert message to one or more PDU segments (UCS2)
-    const segments = smsPdu.Submit.split(message, fullNumber, {
-      encoding: 'ucs2',
-    });
-
-    for (const seg of segments) {
-      // AT+CMGS=<length of PDU in bytes>
-      const pduLength = seg.pdu.length / 2 - seg.scaLength; // remove SCA length
-      await this.sendCommand(`AT+CMGF=0`, ['OK']); // PDU mode
-      await this.sendCommand(`AT+CMGS=${pduLength}`, ['>'], 5000);
-
-      // Send the PDU + Ctrl+Z
-      await this.sendCommand(seg.pdu + '\x1A', ['OK'], 30000);
-      Logger.log(`✅ Sent segment to ${fullNumber}`);
-    }
-  }
   private async _sendSmsInternal({ payload, phonenumber }: SMSInterface) {
     const phoneStr = phonenumber.toString().trim();
     const fullNumber = phoneStr === '0800' ? phoneStr : `+993${phoneStr}`;
 
-    Logger.log(
-      `📤 Sending SMS to ${fullNumber} (Unicode, long message support)`,
-    );
+    Logger.log(`📤 Sending SMS to ${fullNumber} (Unicode, PDU mode)`);
 
     try {
-      await this.sendPduMessage(fullNumber, payload);
+      // Create PDU object
+      const pduObj = Submit.create({
+        recipient: fullNumber,
+        message: payload,
+        encoding: 'ucs2',
+      });
+
+      // Set PDU mode
+      await this.sendCommand('AT+CMGF=0', ['OK']);
+
+      // Calculate length (in octets) minus SCA
+      const pduLength = (pduObj.pdu.length - pduObj.scaLength * 2) / 2;
+
+      // Send AT+CMGS with PDU length
+      await this.sendCommand(`AT+CMGS=${pduLength}`, ['>'], 5000);
+
+      // Send the PDU + Ctrl+Z
+      await this.sendCommand(pduObj.pdu + '\x1A', ['OK'], 30000);
+
       Logger.log(`✅ SMS sent to ${fullNumber}`);
     } catch (err) {
       Logger.error(`Failed to send SMS to ${fullNumber}: ${err.message}`);
