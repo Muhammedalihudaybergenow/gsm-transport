@@ -177,42 +177,38 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
 
     this.isProcessing = false;
   }
-  private toUcs2Be(input: string): Buffer {
-    const buf = Buffer.from(input, 'utf16le'); // Node supports utf16le
-    // Swap bytes to get big-endian
-    for (let i = 0; i < buf.length; i += 2) {
-      const tmp = buf[i];
-      buf[i] = buf[i + 1];
-      buf[i + 1] = tmp;
+  private async sendPduMessage(fullNumber: string, message: string) {
+    // Convert message to one or more PDU segments (UCS2)
+    const segments = smsPdu.Submit.split(message, fullNumber, {
+      encoding: 'ucs2',
+    });
+
+    for (const seg of segments) {
+      // AT+CMGS=<length of PDU in bytes>
+      const pduLength = seg.pdu.length / 2 - seg.scaLength; // remove SCA length
+      await this.sendCommand(`AT+CMGF=0`, ['OK']); // PDU mode
+      await this.sendCommand(`AT+CMGS=${pduLength}`, ['>'], 5000);
+
+      // Send the PDU + Ctrl+Z
+      await this.sendCommand(seg.pdu + '\x1A', ['OK'], 30000);
+      Logger.log(`✅ Sent segment to ${fullNumber}`);
     }
-    return buf;
   }
   private async _sendSmsInternal({ payload, phonenumber }: SMSInterface) {
     const phoneStr = phonenumber.toString().trim();
     const fullNumber = phoneStr === '0800' ? phoneStr : `+993${phoneStr}`;
 
-    // 1️⃣ Set SMS to text mode
-    await this.sendCommand('AT+CMGF=1', ['OK']);
-
-    // 2️⃣ Use UCS2 charset for Turkmen characters
-    await this.sendCommand('AT+CSCS="UCS2"', ['OK']);
-
-    // 3️⃣ Convert message to UCS2 big-endian
-    const messageBuffer = this.toUcs2Be(payload);
-
-    Logger.log(`📤 Sending SMS to ${fullNumber} in UCS2 text mode`);
-
-    // 4️⃣ Start sending SMS
-    await this.sendCommand(`AT+CMGS="${fullNumber}"`, ['>'], 5000);
-
-    // 5️⃣ Send raw UCS2 bytes + Ctrl+Z
-    await this.sendCommand(
-      Buffer.concat([messageBuffer, Buffer.from([0x1a])]).toString('binary'),
-      ['OK'],
-      30000,
+    Logger.log(
+      `📤 Sending SMS to ${fullNumber} (Unicode, long message support)`,
     );
 
-    Logger.log(`✅ SMS sent to ${fullNumber}`);
+    try {
+      await this.sendPduMessage(fullNumber, payload);
+      Logger.log(`✅ SMS sent to ${fullNumber}`);
+    } catch (err) {
+      Logger.error(`Failed to send SMS to ${fullNumber}: ${err.message}`);
+      throw err;
+    }
   }
 
   private async handleIncomingMessage(data: string) {
