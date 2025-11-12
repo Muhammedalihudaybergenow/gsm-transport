@@ -83,6 +83,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
       await new Promise((r) => setTimeout(r, 2000));
       await this.sendCommand('AT+CMGF=0', ['OK']); // text mode
       await new Promise((r) => setTimeout(r, 2000));
+      await this.sendCommand('AT+CSMS=1', ['OK']); // enable message service for multipart
       await this.sendCommand('AT+CNMI=2,1,0,0,0', ['OK']); // incoming SMS notification
       await this.sendCommand(`AT+CSCA="${'+99365999996'}"`, ['OK']);
       await this.sendCommand('AT+CSMP=17,167,0,0', ['OK']);
@@ -196,6 +197,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
         // pdu.length is the length to use
         await this.sendCommand(`AT+CMGS=${pdu.length}`, ['>'], 5000);
         await this.sendCommand(pdu.hex + '\x1A', ['OK'], 30000);
+        await new Promise((r) => setTimeout(r, 500)); // add small delay
         Logger.log(`✅ Sent segment to ${fullNumber} (part)`);
       }
 
