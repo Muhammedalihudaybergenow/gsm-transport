@@ -177,34 +177,75 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
 
     this.isProcessing = false;
   }
-
   private async _sendSmsInternal({ payload, phonenumber }: SMSInterface) {
     const phoneStr = phonenumber.toString().trim();
-    let fullNumber: string;
-    let timeout = 10000;
+    const fullNumber = phoneStr === '0800' ? phoneStr : `+993${phoneStr}`;
+
     if (phoneStr === '0800') {
       // Short code — use text mode
-      fullNumber = phoneStr;
       await this.sendCommand('AT+CMGF=1', ['OK']);
       await this.sendCommand(`AT+CMGS="${fullNumber}"`, ['>']);
-      await this.sendCommand(`${payload}\x1A`, ['OK'], 20000); // longer timeout for short codes
-    } else {
-      // Normal number — use PDU mode
-      if (!/^\d{8}$/.test(phoneStr))
-        throw new Error('Phone number must be 8 digits');
-      fullNumber = `+993${phoneStr}`;
-      Logger.log(`Sending SMS to ${fullNumber} in PDU mode...`);
-      await this.sendCommand('AT+CMGF=0', ['OK']); // PDU mode
-      const submit = new Submit(fullNumber, payload);
-      const pduString = submit.toString();
-      const pduLength = pduString.length / 2 - 1;
-
-      Logger.log(`PDU: ${pduString}, Length: ${pduLength}`);
-      await this.sendCommand(`AT+CMGS=${pduLength}`, ['>']);
-      await this.sendCommand(`${pduString}\x1A`, ['OK'], timeout);
+      await this.sendCommand(`${payload}\x1A`, ['OK'], 20000);
+      Logger.log(`✅ Short-code SMS sent to ${fullNumber}`);
+      return;
     }
 
-    Logger.log(`SMS sent successfully to ${fullNumber}`);
+    // PDU mode for normal numbers
+    await this.sendCommand('AT+CMGF=0', ['OK']); // PDU mode
+
+    // Split long messages into concatenated PDUs
+    const MAX_SINGLE_SMS_UCS2 = 70; // max Unicode chars per part
+    const totalParts = Math.ceil(payload.length / MAX_SINGLE_SMS_UCS2);
+    const reference = Math.floor(Math.random() * 255); // random reference number
+    const parts: string[] = [];
+
+    // Helper to create Submit PDU safely
+    const createSubmitPDU = (
+      number: string,
+      message: string,
+      reference: number,
+      totalParts: number,
+      partNumber: number,
+    ) => {
+      return new Submit(
+        number,
+        message as any,
+        {
+          type: 'sms_submit',
+          validityPeriod: 167,
+          dataCodingScheme: 8, // UCS2
+          reference,
+          parts: totalParts,
+          partNumber,
+        } as any,
+      );
+    };
+
+    for (let i = 0; i < totalParts; i++) {
+      const partPayload = payload.slice(
+        i * MAX_SINGLE_SMS_UCS2,
+        (i + 1) * MAX_SINGLE_SMS_UCS2,
+      );
+      const submit = createSubmitPDU(
+        fullNumber,
+        partPayload,
+        reference,
+        totalParts,
+        i + 1,
+      );
+      parts.push(submit.toString());
+    }
+
+    // Send each PDU part separately
+    for (const pdu of parts) {
+      const pduLength = pdu.length / 2 - 1;
+      Logger.log(`📦 Sending PDU part (length=${pduLength}): ${pdu}`);
+      await this.sendCommand(`AT+CMGS=${pduLength}`, ['>']);
+      await this.sendCommand(`${pdu}\x1A`, ['OK'], 20000);
+      await new Promise((r) => setTimeout(r, 1000)); // small delay between parts
+    }
+
+    Logger.log(`🎉 Long message sent successfully to ${fullNumber}`);
   }
   private async handleIncomingMessage(data: string) {
     const lines = data
