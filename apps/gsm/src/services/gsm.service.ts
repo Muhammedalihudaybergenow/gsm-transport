@@ -9,7 +9,7 @@ import { SerialPort } from 'serialport';
 import { ReadlineParser } from '@serialport/parser-readline';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Submit, Deliver, parse } from 'node-pdu';
-
+const smsPdu = require('node-sms-pdu');
 // Check the type of the parsed PDU and extract data
 interface SMSInterface {
   payload: string;
@@ -181,6 +181,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     const phoneStr = phonenumber.toString().trim();
     const fullNumber = phoneStr === '0800' ? phoneStr : `+993${phoneStr}`;
 
+    // Short-code SMS (text mode)
     if (phoneStr === '0800') {
       await this.sendCommand('AT+CMGF=1', ['OK']);
       await this.sendCommand(`AT+CMGS="${fullNumber}"`, ['>']);
@@ -189,42 +190,21 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    await this.sendCommand('AT+CMGF=0', ['OK']); // PDU mode
+    // Normal number (PDU mode)
+    await this.sendCommand('AT+CMGF=0', ['OK']);
+    const pdus = smsPdu.generateSubmit(fullNumber, payload);
 
-    const MAX_SINGLE_SMS_UCS2 = 70; // UCS2 chars per part
-    const totalParts = Math.ceil(payload.length / MAX_SINGLE_SMS_UCS2);
-    const reference = Math.floor(Math.random() * 255);
-    const parts: string[] = [];
-
-    for (let i = 0; i < totalParts; i++) {
-      const partPayload = payload.slice(
-        i * MAX_SINGLE_SMS_UCS2,
-        (i + 1) * MAX_SINGLE_SMS_UCS2,
+    for (const pdu of pdus) {
+      // Calculate PDU length (excluding SMSC)
+      const pduLength = Math.floor(
+        (pdu.length - (pdu.smsc_length + 1) * 2) / 2,
       );
-
-      const submit = new Submit(fullNumber, partPayload, {
-        type: 'sms_submit',
-        validityPeriod: 167,
-        dataCodingScheme: 8, // UCS2
-        reference,
-        parts: totalParts,
-        partNumber: i + 1,
-      } as any);
-
-      parts.push(submit.toString());
-    }
-
-    for (const pdu of parts) {
-      const pduLength = pdu.length / 2 - 1;
-      Logger.log(`📦 Sending PDU part (length=${pduLength})`);
       await this.sendCommand(`AT+CMGS=${pduLength}`, ['>']);
-      await this.sendCommand(`${pdu}\x1A`, ['OK'], 20000);
-      await new Promise((r) => setTimeout(r, 1000));
+      await this.sendCommand(`${pdu.data}\x1A`, ['OK'], 20000);
     }
 
     Logger.log(`🎉 Long message sent successfully to ${fullNumber}`);
   }
-
   private async handleIncomingMessage(data: string) {
     const lines = data
       .split('\n')
