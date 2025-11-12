@@ -181,12 +181,13 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     const fullNumber = phoneStr === '0800' ? phoneStr : `+993${phoneStr}`;
 
     Logger.log(`📤 Sending SMS to ${fullNumber} (Unicode, PDU mode)`);
-
+    console.log(`Payload: ${payload}`);
     try {
       const smsPdu = require('node-sms-pdu');
       const pduList = smsPdu.generateSubmit(fullNumber, payload, {
         encoding: 'ucs2',
       });
+      console.log(pduList);
 
       // Set PDU mode if not already
       await this.sendCommand('AT+CMGF=0', ['OK']);
