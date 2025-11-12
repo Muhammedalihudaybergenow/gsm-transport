@@ -180,7 +180,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
   private async _sendSmsInternal({ payload, phonenumber }: SMSInterface) {
     const phoneStr = phonenumber.toString().trim();
     const fullNumber = phoneStr === '0800' ? phoneStr : `+993${phoneStr}`;
-
+    console.log(payload);
     // Short-code SMS (text mode)
     if (phoneStr === '0800') {
       await this.sendCommand('AT+CMGF=1', ['OK']);
