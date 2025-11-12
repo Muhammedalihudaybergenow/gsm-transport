@@ -195,12 +195,9 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     const pdus = smsPdu.generateSubmit(fullNumber, payload);
 
     for (const pdu of pdus) {
-      // Calculate PDU length (excluding SMSC)
-      const pduLength = Math.floor(
-        (pdu.length - (pdu.smsc_length + 1) * 2) / 2,
-      );
-      await this.sendCommand(`AT+CMGS=${pduLength}`, ['>']);
-      await this.sendCommand(`${pdu.data}\x1A`, ['OK'], 20000);
+      // Use the length provided by the library - it's already correct for AT commands
+      await this.sendCommand(`AT+CMGS=${pdu.length}`, ['>']);
+      await this.sendCommand(`${pdu.hex}\x1A`, ['OK'], 20000);
     }
 
     Logger.log(`🎉 Long message sent successfully to ${fullNumber}`);
