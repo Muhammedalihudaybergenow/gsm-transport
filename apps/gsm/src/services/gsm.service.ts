@@ -177,33 +177,44 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
 
     this.isProcessing = false;
   }
+  private toUcs2Be(input: string): Buffer {
+    const buf = Buffer.from(input, 'utf16le'); // Node supports utf16le
+    // Swap bytes to get big-endian
+    for (let i = 0; i < buf.length; i += 2) {
+      const tmp = buf[i];
+      buf[i] = buf[i + 1];
+      buf[i + 1] = tmp;
+    }
+    return buf;
+  }
   private async _sendSmsInternal({ payload, phonenumber }: SMSInterface) {
     const phoneStr = phonenumber.toString().trim();
     const fullNumber = phoneStr === '0800' ? phoneStr : `+993${phoneStr}`;
 
-    // Use TEXT MODE for all messages (including Turkmen)
-    await this.sendCommand('AT+CMGF=1', ['OK']); // Text mode
+    // 1️⃣ Set SMS to text mode
+    await this.sendCommand('AT+CMGF=1', ['OK']);
 
-    // Set character set to UCS2 for Turkmen characters
+    // 2️⃣ Use UCS2 charset for Turkmen characters
     await this.sendCommand('AT+CSCS="UCS2"', ['OK']);
 
-    // Convert message to UCS-2 hex
-    const ucs2Hex = Buffer.from(payload, 'utf16le')
-      .toString('hex')
-      .toUpperCase();
+    // 3️⃣ Convert message to UCS2 big-endian
+    const messageBuffer = this.toUcs2Be(payload);
 
-    // Convert phone number to UCS-2 hex
-    const numberHex = Buffer.from(fullNumber, 'utf16le')
-      .toString('hex')
-      .toUpperCase();
+    Logger.log(`📤 Sending SMS to ${fullNumber} in UCS2 text mode`);
 
-    Logger.log(`📤 Sending SMS to ${fullNumber} in text mode`);
+    // 4️⃣ Start sending SMS
+    await this.sendCommand(`AT+CMGS="${fullNumber}"`, ['>'], 5000);
 
-    await this.sendCommand(`AT+CMGS="${numberHex}"`, ['>'], 5000);
-    await this.sendCommand(`${ucs2Hex}\x1A`, ['OK'], 30000);
+    // 5️⃣ Send raw UCS2 bytes + Ctrl+Z
+    await this.sendCommand(
+      Buffer.concat([messageBuffer, Buffer.from([0x1a])]).toString('binary'),
+      ['OK'],
+      30000,
+    );
 
     Logger.log(`✅ SMS sent to ${fullNumber}`);
   }
+
   private async handleIncomingMessage(data: string) {
     const lines = data
       .split('\n')
