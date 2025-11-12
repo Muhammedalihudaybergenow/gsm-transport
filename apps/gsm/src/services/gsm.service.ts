@@ -8,7 +8,6 @@ import { ConfigService } from '@nestjs/config';
 import { SerialPort } from 'serialport';
 import { ReadlineParser } from '@serialport/parser-readline';
 import { Cron, CronExpression } from '@nestjs/schedule';
-const smsPdu = require('node-sms-pdu');
 // Check the type of the parsed PDU and extract data
 interface SMSInterface {
   payload: string;
@@ -185,9 +184,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     console.log(`Payload: ${payload}`);
     try {
       const smsPdu = require('node-sms-pdu');
-      const pduList = smsPdu.generateSubmit(fullNumber, payload, {
-        encoding: 'ucs2',
-      });
+      const pduList = smsPdu.generateSubmit(fullNumber, payload);
       console.log(pduList);
 
       // Set PDU mode if not already
