@@ -86,6 +86,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
       await new Promise((r) => setTimeout(r, 2000));
       await this.sendCommand('AT+CNMI=2,1,0,0,0', ['OK']); // incoming SMS notification
       await this.sendCommand(`AT+CSCA="${'+99365999996'}"`, ['OK']);
+      await this.sendCommand('AT+CSMP=17,167,0,0', ['OK']);
       await new Promise((r) => setTimeout(r, 4000));
       Logger.log('Modem initialized and ready');
     } catch (err) {
