@@ -183,24 +183,20 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     Logger.log(`📤 Sending SMS to ${fullNumber} (Unicode, PDU mode)`);
 
     try {
-      // Create PDU object
-      const pduObj = smsPdu.Submit.create({
-        recipient: fullNumber,
-        message: payload,
+      const smsPdu = require('node-sms-pdu');
+      const pduList = smsPdu.generateSubmit(fullNumber, payload, {
         encoding: 'ucs2',
       });
 
-      // Set PDU mode
+      // Set PDU mode if not already
       await this.sendCommand('AT+CMGF=0', ['OK']);
 
-      // Calculate length (in octets) minus SCA
-      const pduLength = (pduObj.pdu.length - pduObj.scaLength * 2) / 2;
-
-      // Send AT+CMGS with PDU length
-      await this.sendCommand(`AT+CMGS=${pduLength}`, ['>'], 5000);
-
-      // Send the PDU + Ctrl+Z
-      await this.sendCommand(pduObj.pdu + '\x1A', ['OK'], 30000);
+      for (const pdu of pduList) {
+        // pdu.length is the length to use
+        await this.sendCommand(`AT+CMGS=${pdu.length}`, ['>'], 5000);
+        await this.sendCommand(pdu.hex + '\x1A', ['OK'], 30000);
+        Logger.log(`✅ Sent segment to ${fullNumber} (part)`);
+      }
 
       Logger.log(`✅ SMS sent to ${fullNumber}`);
     } catch (err) {
