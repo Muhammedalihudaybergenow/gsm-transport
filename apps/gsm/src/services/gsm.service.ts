@@ -8,7 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { SerialPort } from 'serialport';
 import { ReadlineParser } from '@serialport/parser-readline';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Submit } from 'node-sms-pdu';
+const smsPdu = require('node-sms-pdu');
 // Check the type of the parsed PDU and extract data
 interface SMSInterface {
   payload: string;
@@ -184,7 +184,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
 
     try {
       // Create PDU object
-      const pduObj = Submit.create({
+      const pduObj = smsPdu.Submit.create({
         recipient: fullNumber,
         message: payload,
         encoding: 'ucs2',
