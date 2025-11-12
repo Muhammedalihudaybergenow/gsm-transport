@@ -182,7 +182,6 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     const fullNumber = phoneStr === '0800' ? phoneStr : `+993${phoneStr}`;
 
     if (phoneStr === '0800') {
-      // Short code — use text mode
       await this.sendCommand('AT+CMGF=1', ['OK']);
       await this.sendCommand(`AT+CMGS="${fullNumber}"`, ['>']);
       await this.sendCommand(`${payload}\x1A`, ['OK'], 20000);
@@ -190,63 +189,42 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    // PDU mode for normal numbers
     await this.sendCommand('AT+CMGF=0', ['OK']); // PDU mode
 
-    // Split long messages into concatenated PDUs
-    const MAX_SINGLE_SMS_UCS2 = 70; // max Unicode chars per part
+    const MAX_SINGLE_SMS_UCS2 = 70; // UCS2 chars per part
     const totalParts = Math.ceil(payload.length / MAX_SINGLE_SMS_UCS2);
-    const reference = Math.floor(Math.random() * 255); // random reference number
+    const reference = Math.floor(Math.random() * 255);
     const parts: string[] = [];
-
-    // Helper to create Submit PDU safely
-    const createSubmitPDU = (
-      number: string,
-      message: string,
-      reference: number,
-      totalParts: number,
-      partNumber: number,
-    ) => {
-      return new Submit(
-        number,
-        message as any,
-        {
-          type: 'sms_submit',
-          validityPeriod: 167,
-          dataCodingScheme: 8, // UCS2
-          reference,
-          parts: totalParts,
-          partNumber,
-        } as any,
-      );
-    };
 
     for (let i = 0; i < totalParts; i++) {
       const partPayload = payload.slice(
         i * MAX_SINGLE_SMS_UCS2,
         (i + 1) * MAX_SINGLE_SMS_UCS2,
       );
-      const submit = createSubmitPDU(
-        fullNumber,
-        partPayload,
+
+      const submit = new Submit(fullNumber, partPayload, {
+        type: 'sms_submit',
+        validityPeriod: 167,
+        dataCodingScheme: 8, // UCS2
         reference,
-        totalParts,
-        i + 1,
-      );
+        parts: totalParts,
+        partNumber: i + 1,
+      } as any);
+
       parts.push(submit.toString());
     }
 
-    // Send each PDU part separately
     for (const pdu of parts) {
       const pduLength = pdu.length / 2 - 1;
-      Logger.log(`📦 Sending PDU part (length=${pduLength}): ${pdu}`);
+      Logger.log(`📦 Sending PDU part (length=${pduLength})`);
       await this.sendCommand(`AT+CMGS=${pduLength}`, ['>']);
       await this.sendCommand(`${pdu}\x1A`, ['OK'], 20000);
-      await new Promise((r) => setTimeout(r, 1000)); // small delay between parts
+      await new Promise((r) => setTimeout(r, 1000));
     }
 
     Logger.log(`🎉 Long message sent successfully to ${fullNumber}`);
   }
+
   private async handleIncomingMessage(data: string) {
     const lines = data
       .split('\n')
