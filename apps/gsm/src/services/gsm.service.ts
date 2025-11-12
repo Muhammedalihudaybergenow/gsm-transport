@@ -180,27 +180,29 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
   private async _sendSmsInternal({ payload, phonenumber }: SMSInterface) {
     const phoneStr = phonenumber.toString().trim();
     const fullNumber = phoneStr === '0800' ? phoneStr : `+993${phoneStr}`;
-    console.log(payload);
-    // Short-code SMS (text mode)
-    if (phoneStr === '0800') {
-      await this.sendCommand('AT+CMGF=1', ['OK']);
-      await this.sendCommand(`AT+CMGS="${fullNumber}"`, ['>']);
-      await this.sendCommand(`${payload}\x1A`, ['OK'], 20000);
-      Logger.log(`✅ Short-code SMS sent to ${fullNumber}`);
-      return;
-    }
 
-    // Normal number (PDU mode)
-    await this.sendCommand('AT+CMGF=0', ['OK']);
-    const pdus = smsPdu.generateSubmit(fullNumber, payload);
+    // Use TEXT MODE for all messages (including Turkmen)
+    await this.sendCommand('AT+CMGF=1', ['OK']); // Text mode
 
-    for (const pdu of pdus) {
-      // Use the length provided by the library - it's already correct for AT commands
-      await this.sendCommand(`AT+CMGS=${pdu.length}`, ['>']);
-      await this.sendCommand(`${pdu.hex}\x1A`, ['OK'], 20000);
-    }
+    // Set character set to UCS2 for Turkmen characters
+    await this.sendCommand('AT+CSCS="UCS2"', ['OK']);
 
-    Logger.log(`🎉 Long message sent successfully to ${fullNumber}`);
+    // Convert message to UCS-2 hex
+    const ucs2Hex = Buffer.from(payload, 'utf16le')
+      .toString('hex')
+      .toUpperCase();
+
+    // Convert phone number to UCS-2 hex
+    const numberHex = Buffer.from(fullNumber, 'utf16le')
+      .toString('hex')
+      .toUpperCase();
+
+    Logger.log(`📤 Sending SMS to ${fullNumber} in text mode`);
+
+    await this.sendCommand(`AT+CMGS="${numberHex}"`, ['>'], 5000);
+    await this.sendCommand(`${ucs2Hex}\x1A`, ['OK'], 30000);
+
+    Logger.log(`✅ SMS sent to ${fullNumber}`);
   }
   private async handleIncomingMessage(data: string) {
     const lines = data
