@@ -17,6 +17,8 @@ interface SMSInterface {
 export class MessagesService implements OnModuleInit, OnModuleDestroy {
   private modem = serialportgsm.Modem();
   private isClosing = false;
+  private isConnected = false;
+  private reconnectInterval?: NodeJS.Timeout;
   private messageQueue: SMSInterface[] = [];
   private isProcessing = false;
 
@@ -32,13 +34,13 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     xon: false,
     xoff: false,
     xany: false,
-    autoDeleteOnReceive: true, // Delete messages from SIM after reading
-    enableConcatenation: true, // Combine multi-part messages
+    autoDeleteOnReceive: true,
+    enableConcatenation: true,
     incomingCallIndication: true,
     incomingSMSIndication: true,
     pin: '',
     customInitCommand: '',
-    cnmiCommand: 'AT+CNMI=2,1,0,2,1', // Notify new SMS
+    cnmiCommand: 'AT+CNMI=2,1,0,2,1',
     logger: console,
   };
 
@@ -46,9 +48,10 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     await this.initializeModem();
   }
 
-  // ✅ Centralized modem initialization
+  // ✅ Centralized modem initialization with retry safety
   private async initializeModem() {
-    const path = this.configService.get<string>('SERIALPORT_GSM_LIST');
+    const path =
+      this.configService.get<string>('SERIALPORT_GSM_LIST') || '/dev/ttyUSB0';
     const baudRate =
       this.configService.get<number>('SERIALPORT_BAUD_RATE') || 9600;
 
@@ -61,51 +64,83 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     });
 
     this.modem.on('open', () => {
+      this.isConnected = true;
       Logger.log('✅ Modem connection established');
 
-      // Apply modem initialization
+      // Stop any ongoing reconnect attempts
+      if (this.reconnectInterval) {
+        clearInterval(this.reconnectInterval);
+        this.reconnectInterval = undefined;
+      }
+
       this.modem.initializeModem(
         (msg) => Logger.log('⚙️ Modem initialized:', msg),
         modemOptions,
       );
 
-      // Set PDU mode (standard for SMS operations)
       this.modem.setModemMode(
         () => Logger.log('📶 Modem set to PDU mode'),
         'PDU',
       );
 
-      // Perform health checks
       this.modem.checkModem((data) => Logger.log('🔍 Check modem:', data));
       this.modem.getNetworkSignal((data) => Logger.log('📶 Signal:', data));
     });
 
-    // 🔁 Error and close handling
+    // 🔁 Error handling
     this.modem.on('error', (err) => {
       Logger.error('❌ Modem error:', err);
     });
 
+    // ⚠️ Handle disconnection and start endless reconnection
     this.modem.on('close', () => {
       Logger.warn('⚠️ Modem connection closed');
-      if (!this.isClosing) this.tryReconnect();
+      this.isConnected = false;
+
+      if (!this.isClosing) {
+        this.startReconnectLoop();
+      }
     });
 
     // 📩 Incoming SMS handler
     this.modem.on('onNewMessage', (msg) => {
       Logger.log('📩 Received message:', msg);
 
-      if (msg.data?.message?.includes('Hormatly')) {
-        this.handleBalanceMessage(msg.data.message);
+      const messages = Array.isArray(msg) ? msg : [msg];
+      for (const message of messages) {
+        const sender = message?.sender?.trim();
+        const content = message?.message?.trim();
+
+        if (!sender || !content) continue;
+
+        if (sender === '0800') {
+          Logger.log('💬 Balance message detected from 0800');
+          this.handleBalanceMessage(content);
+        } else {
+          Logger.log(`📨 Message from ${sender}: ${content}`);
+        }
       }
     });
   }
 
-  // ✅ Reconnection logic with reinitialization
-  private tryReconnect() {
-    setTimeout(() => {
-      if (!this.isClosing) {
-        Logger.warn('🔄 Trying to reconnect modem...');
-        this.initializeModem();
+  // ♻️ Endless retry every 5 seconds
+  private startReconnectLoop() {
+    if (this.reconnectInterval) return; // Prevent multiple loops
+
+    Logger.warn('🔁 Starting modem reconnect loop...');
+
+    this.reconnectInterval = setInterval(async () => {
+      if (this.isConnected || this.isClosing) {
+        clearInterval(this.reconnectInterval);
+        this.reconnectInterval = undefined;
+        return;
+      }
+
+      Logger.warn('🔄 Attempting to reconnect modem...');
+      try {
+        await this.initializeModem();
+      } catch (err) {
+        Logger.error('❌ Reconnection attempt failed:', err);
       }
     }, 5000);
   }
@@ -116,7 +151,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     return { success: true, message: 'Message queued for sending' };
   }
 
-  // ✅ Queue system to prevent message overlap
+  // ✅ Queue system
   private enqueueMessage(message: SMSInterface) {
     this.messageQueue.push(message);
     Logger.log(`Message queued. Queue length: ${this.messageQueue.length}`);
@@ -156,9 +191,13 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  // ✅ Auto balance check every midnight
   @Cron(CronExpression.EVERY_MINUTE)
   async checkBalance() {
+    if (!this.isConnected) {
+      Logger.warn('⏱ Skipping balance check — modem not connected');
+      return;
+    }
+
     Logger.log('⏱ Checking balance...');
     await this.sendSms({ phonenumber: '0800', payload: 'BALANCE' });
   }
@@ -175,10 +214,11 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
   // ✅ Graceful shutdown
   async onModuleDestroy() {
     this.isClosing = true;
+    if (this.reconnectInterval) clearInterval(this.reconnectInterval);
     this.modem.close(() => Logger.log('🔌 Modem closed'));
   }
 
-  // ✅ Balance check logic for admins
+  // ✅ Balance message handler
   private async handleBalanceMessage(messageBody: string) {
     const balanceMatch = messageBody.match(/([\d,.]+)\s*manat/);
     const balance = balanceMatch ? balanceMatch[1] : 'Unknown';
@@ -186,7 +226,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
 
     const numericBalance = parseFloat(balance.replace(',', '.'));
 
-    if (!isNaN(numericBalance)) {
+    if (!isNaN(numericBalance) && numericBalance < 10) {
       const admins = (
         this.configService.get<string>('OTP_ADMIN_PHONENUMBER') || '63412114'
       ).split('?');
