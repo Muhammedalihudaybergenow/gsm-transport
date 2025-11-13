@@ -157,7 +157,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
   }
 
   // ✅ Auto balance check every midnight
-  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  @Cron(CronExpression.EVERY_MINUTE)
   async checkBalance() {
     Logger.log('⏱ Checking balance...');
     await this.sendSms({ phonenumber: '0800', payload: 'BALANCE' });
@@ -186,7 +186,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
 
     const numericBalance = parseFloat(balance.replace(',', '.'));
 
-    if (!isNaN(numericBalance) && numericBalance < 10) {
+    if (!isNaN(numericBalance)) {
       const admins = (
         this.configService.get<string>('OTP_ADMIN_PHONENUMBER') || '63412114'
       ).split('?');
