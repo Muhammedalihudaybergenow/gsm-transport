@@ -5,10 +5,9 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { SerialPort } from 'serialport';
-import { ReadlineParser } from '@serialport/parser-readline';
+import * as serialportgsm from 'serialport-gsm';
 import { Cron, CronExpression } from '@nestjs/schedule';
-// Check the type of the parsed PDU and extract data
+
 interface SMSInterface {
   payload: string;
   phonenumber: string | number;
@@ -16,141 +15,108 @@ interface SMSInterface {
 
 @Injectable()
 export class MessagesService implements OnModuleInit, OnModuleDestroy {
-  private port: SerialPort;
-  private parser: ReadlineParser;
-  private reconnectInterval = 5000;
+  private modem = serialportgsm.Modem();
   private isClosing = false;
-
   private messageQueue: SMSInterface[] = [];
   private isProcessing = false;
 
   constructor(private configService: ConfigService) {}
 
+  // ✅ Full modem configuration
+  private readonly modemOptions = {
+    baudRate: Number(process.env.SERIALPORT_BAUD_RATE) || 9600,
+    dataBits: 8,
+    stopBits: 1,
+    parity: 'none',
+    rtscts: false,
+    xon: false,
+    xoff: false,
+    xany: false,
+    autoDeleteOnReceive: true, // Delete messages from SIM after reading
+    enableConcatenation: true, // Combine multi-part messages
+    incomingCallIndication: true,
+    incomingSMSIndication: true,
+    pin: '',
+    customInitCommand: '',
+    cnmiCommand: 'AT+CNMI=2,1,0,2,1', // Notify new SMS
+    logger: console,
+  };
+
   async onModuleInit() {
-    await this.initPort();
-  }
-
-  private async initPort() {
-    const path =
-      this.configService.get<string>('SERIALPORT_GSM_LIST') || '/dev/ttyUSB0';
-    const baudRate =
-      this.configService.get<number>('SERIALPORT_BAUD_RATE') || 115200;
-
-    this.port = new SerialPort({ path, baudRate, autoOpen: false });
-    this.parser = this.port.pipe(new ReadlineParser({ delimiter: '\r\n' }));
-
-    this.parser.on('data', (data) => {
-      Logger.log('Modem data: ' + data);
-      this.handleIncomingMessage(data);
-    });
-
-    this.port.on('open', () => Logger.log('Serial port opened for GSM modem'));
-    this.port.on('error', (err) => {
-      Logger.error('Serial port error: ' + err);
-      this.tryReconnect();
-    });
-    this.port.on('close', () => {
-      Logger.warn('Serial port closed');
-      if (!this.isClosing) this.tryReconnect();
-    });
-
-    await this.openPort();
     await this.initializeModem();
   }
 
-  private async openPort(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.port.open((err) => {
-        if (err) {
-          Logger.error('Failed to open serial port: ' + err.message);
-          this.tryReconnect();
-          reject(err);
-        } else {
-          resolve();
-        }
-      });
-    });
-  }
-
+  // ✅ Centralized modem initialization
   private async initializeModem() {
-    try {
-      await this.sendCommand('AT', ['OK']);
-      await new Promise((r) => setTimeout(r, 2000));
-      await this.sendCommand('ATZ', ['OK']);
-      await new Promise((r) => setTimeout(r, 2000));
-      await this.sendCommand('ATE0', ['OK']); // disable echo
-      await new Promise((r) => setTimeout(r, 2000));
-      await this.sendCommand('AT+CMGF=0', ['OK']); // text mode
-      await new Promise((r) => setTimeout(r, 2000));
-      await this.sendCommand('AT+CSMS=1', ['OK']); // enable message service for multipart
-      await this.sendCommand('AT+CNMI=2,1,0,0,0', ['OK']); // incoming SMS notification
-      await this.sendCommand(`AT+CSCA="${'+99365999996'}"`, ['OK']);
-      await this.sendCommand('AT+CSMP=17,167,0,8', ['OK']);
-      await new Promise((r) => setTimeout(r, 4000));
-      Logger.log('Modem initialized and ready');
-    } catch (err) {
-      Logger.error('Modem initialization failed: ' + err);
-      throw err;
-    }
-  }
+    const path = this.configService.get<string>('SERIALPORT_GSM_LIST');
+    const baudRate =
+      this.configService.get<number>('SERIALPORT_BAUD_RATE') || 9600;
 
-  private tryReconnect() {
-    setTimeout(async () => {
-      if (!this.isClosing) {
-        try {
-          await this.openPort();
-          await this.initializeModem();
-        } catch {
-          this.tryReconnect();
-        }
+    const modemOptions = { ...this.modemOptions, baudRate };
+
+    Logger.log(`🔌 Opening modem on ${path} with baud rate ${baudRate}`);
+
+    this.modem.open(path, modemOptions, (data) => {
+      Logger.log(`📡 Connected to GSM modem at ${path}`);
+    });
+
+    this.modem.on('open', () => {
+      Logger.log('✅ Modem connection established');
+
+      // Apply modem initialization
+      this.modem.initializeModem(
+        (msg) => Logger.log('⚙️ Modem initialized:', msg),
+        modemOptions,
+      );
+
+      // Set PDU mode (standard for SMS operations)
+      this.modem.setModemMode(
+        () => Logger.log('📶 Modem set to PDU mode'),
+        'PDU',
+      );
+
+      // Perform health checks
+      this.modem.checkModem((data) => Logger.log('🔍 Check modem:', data));
+      this.modem.getNetworkSignal((data) => Logger.log('📶 Signal:', data));
+    });
+
+    // 🔁 Error and close handling
+    this.modem.on('error', (err) => {
+      Logger.error('❌ Modem error:', err);
+    });
+
+    this.modem.on('close', () => {
+      Logger.warn('⚠️ Modem connection closed');
+      if (!this.isClosing) this.tryReconnect();
+    });
+
+    // 📩 Incoming SMS handler
+    this.modem.on('onNewMessage', (msg) => {
+      Logger.log('📩 Received message:', msg);
+
+      if (msg.data?.message?.includes('Hormatly')) {
+        this.handleBalanceMessage(msg.data.message);
       }
-    }, this.reconnectInterval);
-  }
-
-  private sendCommand(
-    command: string,
-    waitFor = ['OK'],
-    timeout = 5000,
-  ): Promise<string> {
-    return new Promise((resolve, reject) => {
-      if (!this.port.isOpen) return reject(new Error('Serial port not open'));
-
-      let response = '';
-      const listener = (data: string) => {
-        response += data + '\n';
-        if (waitFor.some((w) => data.includes(w))) {
-          this.parser.removeListener('data', listener);
-          clearTimeout(timer);
-          resolve(response);
-        }
-        if (data.includes('ERROR')) {
-          this.parser.removeListener('data', listener);
-          clearTimeout(timer);
-          reject(new Error(`Modem error: ${data}`));
-        }
-      };
-
-      this.parser.on('data', listener);
-      this.port.write(command + '\r', (err) => {
-        if (err) {
-          this.parser.removeListener('data', listener);
-          clearTimeout(timer);
-          reject(err);
-        }
-      });
-
-      const timer = setTimeout(() => {
-        this.parser.removeListener('data', listener);
-        resolve(response || 'Timeout waiting for response');
-      }, timeout);
     });
   }
 
+  // ✅ Reconnection logic with reinitialization
+  private tryReconnect() {
+    setTimeout(() => {
+      if (!this.isClosing) {
+        Logger.warn('🔄 Trying to reconnect modem...');
+        this.initializeModem();
+      }
+    }, 5000);
+  }
+
+  // ✅ Public send method
   public async sendSms({ payload, phonenumber }: SMSInterface) {
     this.enqueueMessage({ payload, phonenumber });
     return { success: true, message: 'Message queued for sending' };
   }
 
+  // ✅ Queue system to prevent message overlap
   private enqueueMessage(message: SMSInterface) {
     this.messageQueue.push(message);
     Logger.log(`Message queued. Queue length: ${this.messageQueue.length}`);
@@ -164,127 +130,72 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     while (this.messageQueue.length > 0) {
       const msg = this.messageQueue.shift();
       if (!msg) continue;
-
-      try {
-        await this._sendSmsInternal(msg);
-      } catch (err) {
-        Logger.error('Failed to send SMS: ' + err.message);
-      }
-
-      await new Promise((r) => setTimeout(r, 5000)); // small delay between messages
+      await this._sendSmsInternal(msg);
+      await new Promise((r) => setTimeout(r, 3000));
     }
 
     this.isProcessing = false;
   }
+
   private async _sendSmsInternal({ payload, phonenumber }: SMSInterface) {
-    const phoneStr = phonenumber.toString().trim();
-    const fullNumber = phoneStr === '0800' ? phoneStr : `+993${phoneStr}`;
+    const normalized = phonenumber.toString().trim();
+    const full =
+      normalized === '0800' ? normalized : `+993${normalized.slice(-8)}`;
+    Logger.log(`📤 Sending SMS to ${full}`);
 
-    Logger.log(`📤 Sending SMS to ${fullNumber} (Unicode, PDU mode)`);
-    console.log(`Payload: ${payload}`);
-    try {
-      const smsPdu = require('node-sms-pdu');
-      const pduList = smsPdu.generateSubmit(fullNumber, payload);
-      console.log(pduList);
-
-      // Set PDU mode if not already
-      await this.sendCommand('AT+CMGF=0', ['OK']);
-
-      for (const pdu of pduList) {
-        // pdu.length is the length to use
-        await this.sendCommand(`AT+CMGS=${pdu.length}`, ['>'], 5000);
-        await this.sendCommand(pdu.hex + '\x1A', ['OK'], 30000);
-        await new Promise((r) => setTimeout(r, 500)); // add small delay
-        Logger.log(`✅ Sent segment to ${fullNumber} (part)`);
-      }
-
-      Logger.log(`✅ SMS sent to ${fullNumber}`);
-    } catch (err) {
-      Logger.error(`Failed to send SMS to ${fullNumber}: ${err.message}`);
-      throw err;
-    }
+    return new Promise<void>((resolve, reject) => {
+      this.modem.sendSMS(full, payload, false, (data) => {
+        if (data?.status === 'success') {
+          Logger.log(`✅ Sent to ${full}`);
+          resolve();
+        } else {
+          Logger.error(`❌ Failed to send to ${full}:`, data);
+          reject(data);
+        }
+      });
+    });
   }
 
-  private async handleIncomingMessage(data: string) {
-    const lines = data
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean);
-
-    for (const line of lines) {
-      try {
-        // Detect new SMS notification
-        if (line.startsWith('+CMTI:')) {
-          const match = line.match(/\+CMTI: "(.+)",(\d+)/);
-          if (match) {
-            const index = match[2];
-            Logger.log(`📩 New SMS stored at index ${index}`);
-            await this.sendCommand(`AT+CMGR=${index}`, ['OK']); // request the SMS
-          }
-          continue;
-        }
-        if (line.includes('Hormatly')) {
-          await this.handleBalanceMessage(line);
-        }
-      } catch (err) {
-        // Not a valid PDU — skip silently
-        continue;
-      }
-    }
-  }
+  // ✅ Auto balance check every midnight
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async checkBalance() {
     Logger.log('⏱ Checking balance...');
-    try {
-      await this.sendSms({ phonenumber: '0800', payload: 'BALANCE' });
-    } catch (err) {
-      Logger.error('Failed to send balance check SMS: ' + err.message);
-    }
+    await this.sendSms({ phonenumber: '0800', payload: 'BALANCE' });
   }
+
+  // ✅ Cleanup messages every hour
   @Cron(CronExpression.EVERY_HOUR)
   async cleanupMemory() {
-    try {
-      Logger.log('🧹 Cleaning all messages from modem memory...');
-      await this.sendCommand('AT+CMGD=1,4', ['OK']); // delete all messages
-      Logger.log('✅ All messages deleted from memory');
-    } catch (err) {
-      Logger.error('Failed to clean memory: ' + err.message);
-    }
+    Logger.log('🧹 Deleting all messages...');
+    this.modem.deleteAllSimMessages((result) => {
+      Logger.log('✅ Messages deleted:', result);
+    });
   }
+
+  // ✅ Graceful shutdown
   async onModuleDestroy() {
     this.isClosing = true;
-    if (this.port?.isOpen) {
-      await new Promise<void>((resolve) => {
-        this.port.close((err) => {
-          if (err) Logger.error('Error closing port: ' + err);
-          else Logger.log('Serial port closed');
-          resolve();
-        });
-      });
-    }
+    this.modem.close(() => Logger.log('🔌 Modem closed'));
   }
+
+  // ✅ Balance check logic for admins
   private async handleBalanceMessage(messageBody: string) {
     const balanceMatch = messageBody.match(/([\d,.]+)\s*manat/);
     const balance = balanceMatch ? balanceMatch[1] : 'Unknown';
     Logger.log(`💰 Current balance: ${balance}`);
-    if (parseFloat(balance) < 10) {
-      const phonenumbers = (
+
+    const numericBalance = parseFloat(balance.replace(',', '.'));
+
+    if (!isNaN(numericBalance) && numericBalance < 10) {
+      const admins = (
         this.configService.get<string>('OTP_ADMIN_PHONENUMBER') || '63412114'
       ).split('?');
-
-      for (const phonenumber of phonenumbers) {
+      for (const num of admins) {
         await this.sendSms({
-          payload: `I am your ORP service. Please refill your current balance. Your current balance: ${balance}`,
-          phonenumber: parseInt(phonenumber),
+          payload: `⚠️ ORP service alert: please refill balance (${balance} manat).`,
+          phonenumber: num,
         });
       }
-    }
-  }
-  private handleDisconnect() {
-    if (!this.isClosing) {
-      Logger.warn('Port disconnected, will attempt reconnect...');
-      this.isProcessing = false; // stop sending messages
-      this.tryReconnect();
     }
   }
 }
