@@ -3,6 +3,7 @@ import { GsmController } from './controllers/gsm.controller';
 import { MessagesService } from './services';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
+import { MailService } from './services/mail.service';
 
 @Module({
   imports: [
@@ -13,6 +14,6 @@ import { ScheduleModule } from '@nestjs/schedule';
     }),
   ],
   controllers: [GsmController],
-  providers: [MessagesService],
+  providers: [MessagesService, MailService],
 })
 export class GsmModule {}

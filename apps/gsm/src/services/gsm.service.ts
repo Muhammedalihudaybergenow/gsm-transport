@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import * as serialportgsm from 'serialport-gsm';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { MailService } from './mail.service';
 
 interface SMSInterface {
   payload: string;
@@ -18,13 +19,19 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
   private modem = serialportgsm.Modem();
   private isClosing = false;
   private isConnected = false;
+
   private reconnectInterval?: NodeJS.Timeout;
+  private reconnectAttempts = 0;
+
   private messageQueue: SMSInterface[] = [];
   private isProcessing = false;
 
-  constructor(private configService: ConfigService) {}
+  constructor(
+    private configService: ConfigService,
+    private mailService: MailService,
+  ) {}
 
-  // ✅ Full modem configuration
+  // Full modem configuration
   private readonly modemOptions = {
     baudRate: Number(process.env.SERIALPORT_BAUD_RATE) || 9600,
     dataBits: 8,
@@ -34,13 +41,13 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     xon: false,
     xoff: false,
     xany: false,
-    autoDeleteOnReceive: true,
-    enableConcatenation: true,
+    autoDeleteOnReceive: true, // delete messages after reading
+    enableConcatenation: true, // combine multipart SMS
     incomingCallIndication: true,
     incomingSMSIndication: true,
     pin: '',
     customInitCommand: '',
-    cnmiCommand: 'AT+CNMI=2,1,0,2,1',
+    cnmiCommand: 'AT+CNMI=2,1,0,2,1', // notify new SMS
     logger: console,
   };
 
@@ -48,13 +55,11 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     await this.initializeModem();
   }
 
-  // ✅ Centralized modem initialization with retry safety
   private async initializeModem() {
     const path =
       this.configService.get<string>('SERIALPORT_GSM_LIST') || '/dev/ttyUSB0';
     const baudRate =
       this.configService.get<number>('SERIALPORT_BAUD_RATE') || 9600;
-
     const modemOptions = { ...this.modemOptions, baudRate };
 
     Logger.log(`🔌 Opening modem on ${path} with baud rate ${baudRate}`);
@@ -65,9 +70,10 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
 
     this.modem.on('open', () => {
       this.isConnected = true;
+      this.reconnectAttempts = 0; // reset attempts on success
       Logger.log('✅ Modem connection established');
 
-      // Stop any ongoing reconnect attempts
+      // Stop any ongoing reconnect loop
       if (this.reconnectInterval) {
         clearInterval(this.reconnectInterval);
         this.reconnectInterval = undefined;
@@ -77,35 +83,25 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
         (msg) => Logger.log('⚙️ Modem initialized:', msg),
         modemOptions,
       );
-
       this.modem.setModemMode(
         () => Logger.log('📶 Modem set to PDU mode'),
         'PDU',
       );
-
       this.modem.checkModem((data) => Logger.log('🔍 Check modem:', data));
       this.modem.getNetworkSignal((data) => Logger.log('📶 Signal:', data));
     });
 
-    // 🔁 Error handling
     this.modem.on('error', (err) => {
       Logger.error('❌ Modem error:', err);
     });
 
-    // ⚠️ Handle disconnection and start endless reconnection
     this.modem.on('close', () => {
       Logger.warn('⚠️ Modem connection closed');
       this.isConnected = false;
-
-      if (!this.isClosing) {
-        this.startReconnectLoop();
-      }
+      if (!this.isClosing) this.startReconnectLoop();
     });
 
-    // 📩 Incoming SMS handler
     this.modem.on('onNewMessage', (msg) => {
-      Logger.log('📩 Received message:', msg);
-
       const messages = Array.isArray(msg) ? msg : [msg];
       for (const message of messages) {
         const sender = message?.sender?.trim();
@@ -123,20 +119,33 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  // ♻️ Endless retry every 5 seconds
+  // Endless reconnect loop every 5 seconds with email notification on 5th attempt
   private startReconnectLoop() {
-    if (this.reconnectInterval) return; // Prevent multiple loops
+    if (this.reconnectInterval) return;
 
     Logger.warn('🔁 Starting modem reconnect loop...');
 
     this.reconnectInterval = setInterval(async () => {
       if (this.isConnected || this.isClosing) {
-        clearInterval(this.reconnectInterval);
+        clearInterval(this.reconnectInterval!);
         this.reconnectInterval = undefined;
+        this.reconnectAttempts = 0;
         return;
       }
 
-      Logger.warn('🔄 Attempting to reconnect modem...');
+      this.reconnectAttempts++;
+      Logger.warn(`🔄 Reconnection attempt #${this.reconnectAttempts}`);
+
+      // Send email only at exactly 5 attempts
+      if (this.reconnectAttempts === 5) {
+        try {
+          await this.mailService.sendMail('hudaybergenow117@gmail.com');
+          Logger.log('📧 Admin notified after 5 failed attempts');
+        } catch (err) {
+          Logger.error('❌ Failed to send admin email:', err);
+        }
+      }
+
       try {
         await this.initializeModem();
       } catch (err) {
@@ -145,13 +154,13 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     }, 5000);
   }
 
-  // ✅ Public send method
+  // Public send method
   public async sendSms({ payload, phonenumber }: SMSInterface) {
     this.enqueueMessage({ payload, phonenumber });
     return { success: true, message: 'Message queued for sending' };
   }
 
-  // ✅ Queue system
+  // Queue system
   private enqueueMessage(message: SMSInterface) {
     this.messageQueue.push(message);
     Logger.log(`Message queued. Queue length: ${this.messageQueue.length}`);
@@ -191,7 +200,8 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  @Cron(CronExpression.EVERY_MINUTE)
+  // Auto balance check every 3 hours if connected
+  @Cron(CronExpression.EVERY_3_HOURS)
   async checkBalance() {
     if (!this.isConnected) {
       Logger.warn('⏱ Skipping balance check — modem not connected');
@@ -202,23 +212,24 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     await this.sendSms({ phonenumber: '0800', payload: 'BALANCE' });
   }
 
-  // ✅ Cleanup messages every hour
+  // Cleanup messages every hour
   @Cron(CronExpression.EVERY_HOUR)
   async cleanupMemory() {
+    if (!this.isConnected) return;
     Logger.log('🧹 Deleting all messages...');
-    this.modem.deleteAllSimMessages((result) => {
-      Logger.log('✅ Messages deleted:', result);
-    });
+    this.modem.deleteAllSimMessages((result) =>
+      Logger.log('✅ Messages deleted:', result),
+    );
   }
 
-  // ✅ Graceful shutdown
+  // Graceful shutdown
   async onModuleDestroy() {
     this.isClosing = true;
     if (this.reconnectInterval) clearInterval(this.reconnectInterval);
     this.modem.close(() => Logger.log('🔌 Modem closed'));
   }
 
-  // ✅ Balance message handler
+  // Handle balance messages from 0800
   private async handleBalanceMessage(messageBody: string) {
     const balanceMatch = messageBody.match(/([\d,.]+)\s*manat/);
     const balance = balanceMatch ? balanceMatch[1] : 'Unknown';
@@ -230,6 +241,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
       const admins = (
         this.configService.get<string>('OTP_ADMIN_PHONENUMBER') || '63412114'
       ).split('?');
+
       for (const num of admins) {
         await this.sendSms({
           payload: `⚠️ ORP service alert: please refill balance (${balance} manat).`,
