@@ -212,7 +212,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
   // ---------------------------
   // Cron Jobs
   // ---------------------------
-  @Cron(CronExpression.EVERY_MINUTE)
+  @Cron(CronExpression.EVERY_5_HOURS)
   async checkBalance() {
     if (!this.isConnected) {
       Logger.warn('⏱ Skipping balance check — modem not connected');

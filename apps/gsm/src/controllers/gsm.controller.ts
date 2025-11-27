@@ -1,6 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { MessagesService } from '../services/gsm.service';
-import { MessagePattern, Payload } from '@nestjs/microservices';
+import { EventPattern, MessagePattern, Payload } from '@nestjs/microservices';
 
 @Controller()
 export class GsmController {
