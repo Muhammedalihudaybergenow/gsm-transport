@@ -223,7 +223,11 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     Logger.log('⏱ Checking balance...');
-    await this.sendSms({ phonenumber: '0800', payload: 'BALANCE' });
+    await this.sendSms({
+      phonenumber: '0800',
+      payload: 'BALANCE',
+      key: this.configService.get('OTP_KEY'),
+    });
   }
 
   @Cron(CronExpression.EVERY_HOUR)
@@ -265,6 +269,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
         await this.sendSms({
           payload: `⚠️ ORP service alert: please refill balance (${balance} manat).`,
           phonenumber: num,
+          key: this.configService.get('OTP_KEY'),
         });
       }
     }
