@@ -166,9 +166,6 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
   // SMS Sending
   // ---------------------------
   public async sendSms({ payload, phonenumber, key }: SMSInterface) {
-    if (key !== this.configService.get('OTP_KEY')) {
-      return;
-    }
     this.enqueueMessage({ payload, phonenumber });
     return { success: true, message: 'Message queued for sending' };
   }
