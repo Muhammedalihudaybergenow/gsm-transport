@@ -7,8 +7,6 @@ import {
 import { ConfigService } from '@nestjs/config';
 import * as serialportgsm from 'serialport-gsm';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { MailService } from './mail.service';
-
 interface SMSInterface {
   payload: string;
   phonenumber: string | number;
@@ -26,10 +24,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
   private messageQueue: SMSInterface[] = [];
   private isProcessing = false;
 
-  constructor(
-    private configService: ConfigService,
-    private mailService: MailService,
-  ) {}
+  constructor(private configService: ConfigService) {}
 
   private readonly modemOptions = {
     baudRate: Number(process.env.SERIALPORT_BAUD_RATE) || 9600,
@@ -53,10 +48,6 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
   async onModuleInit() {
     await this.initializeModem();
   }
-
-  // ---------------------------
-  // Modem Initialization
-  // ---------------------------
   private async initializeModem() {
     const path =
       this.configService.get<string>('SERIALPORT_GSM_LIST') || '/dev/ttyUSB0';
@@ -127,9 +118,6 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  // ---------------------------
-  // Reconnect logic
-  // ---------------------------
   private startReconnectLoop() {
     if (this.reconnectInterval) return;
 
@@ -147,11 +135,8 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
 
       // Send email to admin on 5th attempt
       if (this.reconnectAttempts === 5) {
+        Logger.warn('⚠️ 5 failed attempts to reconnect modem');
         Logger.warn('✉️ Sending alert email to admin');
-        await this.mailService.sendMail(
-          this.configService.get<string>('OTP_ADMIN') ||
-            'hudaybergenow117@gmail.com',
-        );
       }
 
       try {
@@ -161,10 +146,6 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
       }
     }, 5000);
   }
-
-  // ---------------------------
-  // SMS Sending
-  // ---------------------------
   public async sendSms({ payload, phonenumber, key }: SMSInterface) {
     console.log('Sending SMS:', { payload, phonenumber, key });
     this.enqueueMessage({ payload, phonenumber });
@@ -210,10 +191,6 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
       });
     });
   }
-
-  // ---------------------------
-  // Cron Jobs
-  // ---------------------------
   @Cron(CronExpression.EVERY_5_HOURS)
   async checkBalance() {
     if (!this.isConnected) {
@@ -240,18 +217,12 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  // ---------------------------
-  // Module Shutdown
-  // ---------------------------
   async onModuleDestroy() {
     this.isClosing = true;
     if (this.reconnectInterval) clearInterval(this.reconnectInterval);
     this.modem.close(() => Logger.log('🔌 Modem closed'));
   }
 
-  // ---------------------------
-  // Balance Message Handler
-  // ---------------------------
   private async handleBalanceMessage(messageBody: string) {
     const balanceMatch = messageBody.match(/([\d,.]+)\s*manat/);
     const balance = balanceMatch ? balanceMatch[1] : 'Unknown';

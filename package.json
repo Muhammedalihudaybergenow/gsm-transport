@@ -33,6 +33,7 @@
     "class-validator": "^0.14.3",
     "compression": "^1.8.1",
     "iconv-lite": "^0.7.1",
+    "nats": "^2.29.3",
     "node-pdu": "^2.1.1",
     "node-sms-pdu": "^0.3.0",
     "nodemailer": "^7.0.11",
