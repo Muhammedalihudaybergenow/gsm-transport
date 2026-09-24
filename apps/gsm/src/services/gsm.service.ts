@@ -149,6 +149,7 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
   public async sendSms({ payload, phonenumber, key }: SMSInterface) {
     try {
       console.log('Sending SMS:', { payload, phonenumber, key });
+      return true;
       this.enqueueMessage({ payload, phonenumber });
       return true;
     } catch {
