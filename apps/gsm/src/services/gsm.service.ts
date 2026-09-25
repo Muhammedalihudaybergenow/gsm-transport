@@ -51,8 +51,10 @@ export class MessagesService implements OnModuleInit, OnModuleDestroy {
   private async initializeModem() {
     const path =
       this.configService.get<string>('SERIALPORT_GSM_LIST') || '/dev/ttyUSB0';
-    const baudRate =
-      this.configService.get<number>('SERIALPORT_BAUD_RATE') || 9600;
+    const baudRate = parseInt(
+      this.configService.get<string>('SERIALPORT_BAUD_RATE') || '9600',
+      10,
+    );
 
     const options = { ...this.modemOptions, baudRate };
 
